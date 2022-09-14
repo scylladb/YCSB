@@ -268,6 +268,11 @@ public class DynamoDBClient extends DB {
       attributes.put(val.getKey(), new AttributeValueUpdate().withValue(v).withAction("PUT"));
     }
 
+    if (null != this.ttlKeyName) {
+      AttributeValue v = new AttributeValue(String.valueOf((System.currentTimeMillis() / 1000L) + this.ttlDuration));
+      attributes.put(this.ttlKeyName, new AttributeValueUpdate().withValue(v).withAction("PUT"));
+    }
+
     UpdateItemRequest req = new UpdateItemRequest(table, createPrimaryKey(key), attributes);
 
     try {
