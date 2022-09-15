@@ -269,7 +269,8 @@ public class DynamoDBClient extends DB {
     }
 
     if (null != this.ttlKeyName) {
-      AttributeValue v = new AttributeValue(String.valueOf((System.currentTimeMillis() / 1000L) + this.ttlDuration));
+      AttributeValue v = new AttributeValue().withN(
+          String.valueOf((System.currentTimeMillis() / 1000L) + this.ttlDuration));
       attributes.put(this.ttlKeyName, new AttributeValueUpdate().withValue(v).withAction("PUT"));
     }
 
@@ -304,7 +305,7 @@ public class DynamoDBClient extends DB {
     }
 
     if (null != this.ttlKeyName) {
-      attributes.put(this.ttlKeyName, new AttributeValue(
+      attributes.put(this.ttlKeyName, new AttributeValue().withN(
           String.valueOf((System.currentTimeMillis() / 1000L) + this.ttlDuration)));
     }
 
