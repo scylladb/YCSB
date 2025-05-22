@@ -21,6 +21,7 @@ import site.ycsb.Status;
 import site.ycsb.measurements.exporter.MeasurementsExporter;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -68,6 +69,10 @@ public class Measurements {
 
   private final ConcurrentHashMap<String, OneMeasurement> opToMesurementMap;
   private final ConcurrentHashMap<String, OneMeasurement> opToIntendedMesurementMap;
+  private final ThreadLocal<HashMap<String, OneMeasurement>> opToMesurementMapThreadLocal =
+      new ThreadLocal<HashMap<String, OneMeasurement>>();
+  private final ThreadLocal<HashMap<String, OneMeasurement>> opToIntendedMesurementMapThreadLocal =
+      new ThreadLocal<HashMap<String, OneMeasurement>>();
   private final MeasurementType measurementType;
   private final int measurementInterval;
   private final Properties props;
@@ -214,7 +219,7 @@ public class Measurements {
     }
   }
 
-  private OneMeasurement getOpMeasurement(String operation) {
+  private synchronized OneMeasurement getOpMeasurementSynchronized(String operation) {
     OneMeasurement m = opToMesurementMap.get(operation);
     if (m == null) {
       m = constructOneMeasurement(operation);
@@ -226,7 +231,7 @@ public class Measurements {
     return m;
   }
 
-  private OneMeasurement getOpIntendedMeasurement(String operation) {
+  private synchronized OneMeasurement getOpIntendedMeasurementSynchronized(String operation) {
     OneMeasurement m = opToIntendedMesurementMap.get(operation);
     if (m == null) {
       final String name = measurementInterval == 1 ? operation : "Intended-" + operation;
@@ -235,6 +240,34 @@ public class Measurements {
       if (oldM != null) {
         m = oldM;
       }
+    }
+    return m;
+  }
+
+  private OneMeasurement getOpMeasurement(String operation) {
+    HashMap<String, OneMeasurement> local = opToMesurementMapThreadLocal.get();
+    if (local == null) {
+      local = new HashMap<>();
+      opToMesurementMapThreadLocal.set(local);
+    }
+    OneMeasurement m = local.get(operation);
+    if (m == null) {
+      m = getOpMeasurementSynchronized(operation);
+      local.put(operation, m);
+    }
+    return m;
+  }
+
+  private OneMeasurement getOpIntendedMeasurement(String operation) {
+    HashMap<String, OneMeasurement> local = opToIntendedMesurementMapThreadLocal.get();
+    if (local == null) {
+      local = new HashMap<>();
+      opToIntendedMesurementMapThreadLocal.set(local);
+    }
+    OneMeasurement m = local.get(operation);
+    if (m == null) {
+      m = getOpIntendedMeasurementSynchronized(operation);
+      local.put(operation, m);
     }
     return m;
   }
