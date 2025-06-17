@@ -1,0 +1,42 @@
+name: "Test"
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+
+jobs:
+  packaging:
+    strategy:
+      fail-fast: true
+      matrix:
+        java: ["21"]
+    uses: "./.github/workflows/build.yml"
+    with:
+      version: "1.0.0"
+      java: "${{ matrix.java }}"
+  tests:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: true
+      matrix:
+        java: ["21"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "${{ matrix.java }}"
+      - name: Install Deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y maven
+      - name: Run Tests
+        run: mvn -ff -pl site.ycsb:scylla-binding,site.ycsb:dynamodb-binding -am test -Djava.source="${{ matrix.java }}" -Djava.target="${{ matrix.java }}" -DskipTests=false

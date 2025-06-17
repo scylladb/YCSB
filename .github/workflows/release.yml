@@ -1,0 +1,75 @@
+name: "Release"
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  tag:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version_tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Get Tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: olegtarasov/get-tag@v2.1.4
+        id: version_tag
+        with:
+          tagRegex: "v(.*)"
+  docker:
+    needs: ["tag"]
+    uses: "./.github/workflows/docker.yml"
+    with:
+      version: "${{ needs.tag.outputs.version }}"
+    secrets:
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      REGISTRY: ${{ secrets.REGISTRY }}
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+  build:
+    needs: ["tag"]
+    uses: "./.github/workflows/build.yml"
+    strategy:
+      matrix:
+        java: ["21"]
+    with:
+      version: "${{ needs.tag.outputs.version }}"
+      java: "${{ matrix.java }}"
+  release:
+    needs: ["tag", "docker", "build"]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ycsb-java8
+      - uses: actions/download-artifact@v4
+        with:
+          name: ycsb-java21
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        id: release
+        with:
+          make_latest: true
+          name: "v${{ needs.tag.outputs.version }}"
+          tag_name: "v${{ needs.tag.outputs.version }}"
+          generate_release_notes: true
+          append_body: true
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+             scylla-ycsb-${{ needs.tag.outputs.version }}-java8.tar.gz
+             scylla-ycsb-${{ needs.tag.outputs.version }}-java21.tar.gz
+      - name: "Generate release changelog"
+        uses: heinrichreimer/action-github-changelog-generator@v2.4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          author: true
+          releaseUrl: ${{ steps.release.outputs.url }}
+          issues: false
+          pullRequests: true
