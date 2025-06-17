@@ -109,6 +109,8 @@ LICENSE file.
   <properties>
     <maven.assembly.version>2.5.5</maven.assembly.version>
     <maven.dependency.version>2.10</maven.dependency.version>
+    <java.source>1.8</java.source>
+    <java.target>1.8</java.target>
 
     <!-- datastore binding versions, lex sorted -->
     <accumulo.1.9.version>1.9.3</accumulo.1.9.version>
@@ -246,10 +248,10 @@ LICENSE file.
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.7.0</version>
+        <version>3.11.0</version>
         <configuration>
-          <source>1.8</source>
-          <target>1.8</target>
+          <source>${java.source}</source>
+          <target>${java.target}</target>
         </configuration>
       </plugin>
       <plugin>
