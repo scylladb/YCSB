@@ -85,7 +85,7 @@ public class Measurements {
     opToIntendedMesurementMap = new ConcurrentHashMap<>();
 
     this.props = props;
-
+    
     String mTypeString = this.props.getProperty(MEASUREMENT_TYPE_PROPERTY, MEASUREMENT_TYPE_PROPERTY_DEFAULT);
     switch (mTypeString) {
     case "histogram":
@@ -127,6 +127,7 @@ public class Measurements {
   }
 
   private OneMeasurement constructOneMeasurement(String name) {
+    System.out.println("Constructing one measurement type " + measurementType + " for " + name);
     switch (measurementType) {
     case HISTOGRAM:
       return new OneMeasurementHistogram(name, props);
@@ -225,6 +226,8 @@ public class Measurements {
       m = constructOneMeasurement(operation);
       OneMeasurement oldM = opToMesurementMap.putIfAbsent(operation, m);
       if (oldM != null) {
+        System.out.println("One measurement type " + measurementType + " for " + operation + 
+            " already exists, using it.");
         m = oldM;
       }
     }
@@ -238,6 +241,8 @@ public class Measurements {
       m = constructOneMeasurement(name);
       OneMeasurement oldM = opToIntendedMesurementMap.putIfAbsent(operation, m);
       if (oldM != null) {
+        System.out.println("One measurement type " + measurementType + " for " + operation + 
+            " already exists, using it.");
         m = oldM;
       }
     }
