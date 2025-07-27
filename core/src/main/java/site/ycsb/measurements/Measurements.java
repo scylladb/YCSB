@@ -25,10 +25,16 @@ import java.util.HashMap;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Collects latency measurements, and reports them when requested.
  */
 public class Measurements {
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(Measurements.class);
+
   /**
    * All supported measurement types are defined in this enum.
    */
@@ -85,7 +91,7 @@ public class Measurements {
     opToIntendedMesurementMap = new ConcurrentHashMap<>();
 
     this.props = props;
-
+    
     String mTypeString = this.props.getProperty(MEASUREMENT_TYPE_PROPERTY, MEASUREMENT_TYPE_PROPERTY_DEFAULT);
     switch (mTypeString) {
     case "histogram":
@@ -127,6 +133,7 @@ public class Measurements {
   }
 
   private OneMeasurement constructOneMeasurement(String name) {
+    LOGGER.info("Constructing one measurement type " + measurementType + " for " + name);
     switch (measurementType) {
     case HISTOGRAM:
       return new OneMeasurementHistogram(name, props);
@@ -192,11 +199,9 @@ public class Measurements {
     try {
       OneMeasurement m = getOpMeasurement(operation);
       m.measure(latency);
-    } catch (java.lang.ArrayIndexOutOfBoundsException e) {
+    } catch (ArrayIndexOutOfBoundsException e) {
       // This seems like a terribly hacky way to cover up for a bug in the measurement code
-      System.out.println("ERROR: java.lang.ArrayIndexOutOfBoundsException - ignoring and continuing");
-      e.printStackTrace();
-      e.printStackTrace(System.out);
+      LOGGER.error("ERROR: java.lang.ArrayIndexOutOfBoundsException - ignoring and continuing", e);
     }
   }
 
@@ -211,11 +216,9 @@ public class Measurements {
     try {
       OneMeasurement m = getOpIntendedMeasurement(operation);
       m.measure(latency);
-    } catch (java.lang.ArrayIndexOutOfBoundsException e) {
+    } catch (ArrayIndexOutOfBoundsException e) {
       // This seems like a terribly hacky way to cover up for a bug in the measurement code
-      System.out.println("ERROR: java.lang.ArrayIndexOutOfBoundsException - ignoring and continuing");
-      e.printStackTrace();
-      e.printStackTrace(System.out);
+      LOGGER.error("ERROR: java.lang.ArrayIndexOutOfBoundsException - ignoring and continuing", e);
     }
   }
 
@@ -225,6 +228,8 @@ public class Measurements {
       m = constructOneMeasurement(operation);
       OneMeasurement oldM = opToMesurementMap.putIfAbsent(operation, m);
       if (oldM != null) {
+        LOGGER.info("One measurement type " + measurementType + " for " + operation + 
+            " already exists, using it.");
         m = oldM;
       }
     }
@@ -238,6 +243,8 @@ public class Measurements {
       m = constructOneMeasurement(name);
       OneMeasurement oldM = opToIntendedMesurementMap.putIfAbsent(operation, m);
       if (oldM != null) {
+        LOGGER.info("One measurement type " + measurementType + " for " + operation +
+            " already exists, using it.");
         m = oldM;
       }
     }

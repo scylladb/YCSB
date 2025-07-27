@@ -32,11 +32,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Take measurements and maintain a HdrHistogram of a given metric, such as READ LATENCY.
  *
  */
 public class OneMeasurementHdrHistogram extends OneMeasurement {
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(OneMeasurementHdrHistogram.class);
 
   // we need one log per measurement histogram
   private final PrintStream log;
@@ -60,15 +65,22 @@ public class OneMeasurementHdrHistogram extends OneMeasurement {
    */
   public static final String VERBOSE_PROPERTY = "measurement.histogram.verbose";
 
+  public static final String HDRHISTOGRAM_TAG = "hdrhistogram.tag";
+
   /**
    * Whether or not to emit the histogram buckets.
    */
   private final boolean verbose;
-  
+
+  private final boolean addTag;
+
   private final List<Double> percentiles;
 
   public OneMeasurementHdrHistogram(String name, Properties props) {
     super(name);
+    addTag = props.getProperty(HDRHISTOGRAM_TAG, "false").equals("true");
+    LOGGER.info("Tagging is " + (addTag ? "enabled" : "disabled") + " for " + name);
+
     percentiles = getPercentileValues(props.getProperty(PERCENTILES_PROPERTY, PERCENTILES_PROPERTY_DEFAULT));
     verbose = Boolean.valueOf(props.getProperty(VERBOSE_PROPERTY, String.valueOf(false)));
     boolean shouldLog = Boolean.parseBoolean(props.getProperty("hdrhistogram.fileoutput", "false"));
@@ -76,11 +88,12 @@ public class OneMeasurementHdrHistogram extends OneMeasurement {
       log = null;
       histogramLogWriter = null;
     } else {
+      final String hdrOutputFilename = props.getProperty("hdrhistogram.output.path", "") + name + ".hdr";
       try {
-        final String hdrOutputFilename = props.getProperty("hdrhistogram.output.path", "") + name + ".hdr";
         log = new PrintStream(new FileOutputStream(hdrOutputFilename), false);
+        LOGGER.info("Opened hdr file output " + hdrOutputFilename + " for writing");
       } catch (FileNotFoundException e) {
-        throw new RuntimeException("Failed to open hdr histogram output file", e);
+        throw new RuntimeException("Failed to open hdr histogram output file `" + hdrOutputFilename + "`", e);
       }
       histogramLogWriter = new HistogramLogWriter(log);
       histogramLogWriter.outputComment("[Logging for: " + name + "]");
@@ -109,6 +122,9 @@ public class OneMeasurementHdrHistogram extends OneMeasurement {
     // accumulate the last interval which was not caught by status thread
     Histogram intervalHistogram = getIntervalHistogramAndAccumulate();
     if (histogramLogWriter != null) {
+      if (addTag) {
+        intervalHistogram.setTag(getName());
+      }
       histogramLogWriter.outputIntervalHistogram(intervalHistogram);
       // we can close now
       log.close();
@@ -155,6 +171,9 @@ public class OneMeasurementHdrHistogram extends OneMeasurement {
     Histogram intervalHistogram = getIntervalHistogramAndAccumulate();
     // we use the summary interval as the histogram file interval.
     if (histogramLogWriter != null) {
+      if (addTag) {
+        intervalHistogram.setTag(getName());
+      }
       histogramLogWriter.outputIntervalHistogram(intervalHistogram);
     }
 
