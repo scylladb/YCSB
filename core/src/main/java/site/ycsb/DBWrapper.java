@@ -182,9 +182,9 @@ public class DBWrapper extends DB {
       }
     }
     measurements.measure(measurementName,
-        (int) ((endTimeNanos - startTimeNanos) / 1000));
+        (long) ((endTimeNanos - startTimeNanos) / 1000));
     measurements.measureIntended(measurementName,
-        (int) ((endTimeNanos - intendedStartTimeNanos) / 1000));
+        (long) ((endTimeNanos - intendedStartTimeNanos) / 1000));
   }
 
   /**

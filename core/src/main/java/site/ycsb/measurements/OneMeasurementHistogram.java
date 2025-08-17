@@ -74,8 +74,8 @@ public class OneMeasurementHistogram extends OneMeasurement {
   private long windowoperations;
   private long windowtotallatency;
 
-  private int min;
-  private int max;
+  private long min;
+  private long max;
 
   public OneMeasurementHistogram(String name, Properties props) {
     super(name);
@@ -93,14 +93,14 @@ public class OneMeasurementHistogram extends OneMeasurement {
   }
 
   /* (non-Javadoc)
-   * @see site.ycsb.OneMeasurement#measure(int)
+   * @see site.ycsb.OneMeasurement#measure(long)
    */
-  public synchronized void measure(int latency) {
+  public synchronized void measure(long latency) {
     //latency reported in us and collected in bucket by ms.
     if (latency / 1000 >= buckets) {
       histogramoverflow++;
     } else {
-      histogram[latency / 1000]++;
+      histogram[(int)(latency / 1000)]++;
     }
     operations++;
     totallatency += latency;

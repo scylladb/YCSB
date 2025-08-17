@@ -222,7 +222,7 @@ public class HBaseClient2 extends site.ycsb.DB {
       }
       long en = System.nanoTime();
       final String type = clientSideBuffering ? "UPDATE" : "CLEANUP";
-      measurements.measure(type, (int) ((en - st) / 1000));
+      measurements.measure(type, (long) ((en - st) / 1000));
       int threadCount = THREAD_COUNT.decrementAndGet();
       if (threadCount <= 0) {
         // Means we are done so ok to shut down the Connection.
