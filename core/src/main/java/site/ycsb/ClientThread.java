@@ -66,6 +66,9 @@ public class ClientThread implements Runnable {
     if (targetperthreadperms > 0) {
       targetOpsPerMs = targetperthreadperms;
       targetOpsTickNs = (long) (1000000 / targetOpsPerMs);
+      if (targetOpsTickNs == 0) {
+        targetOpsTickNs = 1;
+      }
     }
     this.props = props;
     measurements = Measurements.getMeasurements();
