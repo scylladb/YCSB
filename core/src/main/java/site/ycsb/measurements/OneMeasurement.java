@@ -45,7 +45,7 @@ public abstract class OneMeasurement {
     this.returncodes = new ConcurrentHashMap<>();
   }
 
-  public abstract void measure(int latency);
+  public abstract void measure(long latency);
 
   public abstract String getSummary();
 

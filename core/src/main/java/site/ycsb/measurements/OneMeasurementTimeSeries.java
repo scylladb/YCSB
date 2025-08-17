@@ -63,8 +63,8 @@ public class OneMeasurementTimeSeries extends OneMeasurement {
   private int windowoperations = 0;
   private long windowtotallatency = 0;
 
-  private int min = -1;
-  private int max = -1;
+  private long min = -1;
+  private long max = -1;
 
   public OneMeasurementTimeSeries(String name, Properties props) {
     super(name);
@@ -94,7 +94,7 @@ public class OneMeasurementTimeSeries extends OneMeasurement {
   }
 
   @Override
-  public void measure(int latency) {
+  public void measure(long latency) {
     checkEndOfUnit(false);
 
     count++;
