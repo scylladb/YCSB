@@ -42,6 +42,7 @@ public abstract class Workload {
   public static final String INSERT_START_PROPERTY_DEFAULT = "0";
   
   private volatile AtomicBoolean stopRequested = new AtomicBoolean(false);
+  private volatile AtomicBoolean failure = new AtomicBoolean(false);
   
   /** Operations available for a database. */
   public enum Operation {
@@ -109,6 +110,18 @@ public abstract class Workload {
    * Allows scheduling a request to stop the workload.
    */
   public void requestStop() {
+    stopRequested.set(true);
+  }
+
+  public boolean hasFailed() {
+    return failure.get();
+  }
+
+  /**
+   * Allows scheduling a request to stop the workload.
+   */
+  public void requestStopBecauseOfError() {
+    failure.set(true);
     stopRequested.set(true);
   }
 
