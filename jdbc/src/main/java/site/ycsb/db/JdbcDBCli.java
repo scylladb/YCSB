@@ -88,7 +88,7 @@ public final class JdbcDBCli {
         argindex++;
         if (argindex >= args.length) {
           usageMessage();
-          System.exit(0);
+          System.exit(1);
         }
         String propfile = args[argindex];
         argindex++;
@@ -98,7 +98,7 @@ public final class JdbcDBCli {
           myfileprops.load(new FileInputStream(propfile));
         } catch (IOException e) {
           System.out.println(e.getMessage());
-          System.exit(0);
+          System.exit(1);
         }
 
         // Issue #5 - remove call to stringPropertyNames to make compilable
@@ -113,12 +113,12 @@ public final class JdbcDBCli {
         argindex++;
         if (argindex >= args.length) {
           usageMessage();
-          System.exit(0);
+          System.exit(1);
         }
         int eq = args[argindex].indexOf('=');
         if (eq < 0) {
           usageMessage();
-          System.exit(0);
+          System.exit(1);
         }
 
         String name = args[argindex].substring(0, eq);
@@ -129,13 +129,13 @@ public final class JdbcDBCli {
         argindex++;
         if (argindex >= args.length) {
           usageMessage();
-          System.exit(0);
+          System.exit(1);
         }
         sql = args[argindex++];
       } else {
         System.out.println("Unknown option " + args[argindex]);
         usageMessage();
-        System.exit(0);
+        System.exit(1);
       }
 
       if (argindex >= args.length) {
@@ -145,7 +145,7 @@ public final class JdbcDBCli {
 
     if (argindex != args.length) {
       usageMessage();
-      System.exit(0);
+      System.exit(1);
     }
 
     // overwrite file properties with properties from the command line

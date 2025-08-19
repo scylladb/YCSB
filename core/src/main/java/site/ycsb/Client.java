@@ -384,7 +384,7 @@ public final class Client {
     } catch (WorkloadException e) {
       e.printStackTrace();
       e.printStackTrace(System.out);
-      System.exit(0);
+      System.exit(1);
     }
 
     try {
@@ -397,6 +397,11 @@ public final class Client {
       System.exit(-1);
     }
 
+    if (workload.hasFailed()) {
+      System.err.println("Workload has failed, exiting with error code 1.");
+      System.exit(1);
+    }
+    
     System.exit(0);
   }
 
@@ -448,7 +453,7 @@ public final class Client {
 
       if (initFailed) {
         System.err.println("Error initializing datastore bindings.");
-        System.exit(0);
+        System.exit(1);
       }
     }
     return clients;
@@ -469,7 +474,7 @@ public final class Client {
     } catch (WorkloadException e) {
       e.printStackTrace();
       e.printStackTrace(System.out);
-      System.exit(0);
+      System.exit(1);
     }
   }
 
@@ -520,7 +525,7 @@ public final class Client {
     } catch (Exception e) {
       e.printStackTrace();
       e.printStackTrace(System.out);
-      System.exit(0);
+      System.exit(1);
     }
 
     return null;
@@ -540,7 +545,7 @@ public final class Client {
     if (args.length == 0) {
       usageMessage();
       System.out.println("At least one argument specifying a workload is required.");
-      System.exit(0);
+      System.exit(1);
     }
 
     while (args[argindex].startsWith("-")) {
@@ -549,7 +554,7 @@ public final class Client {
         if (argindex >= args.length) {
           usageMessage();
           System.out.println("Missing argument value for -threads.");
-          System.exit(0);
+          System.exit(1);
         }
         int tcount = Integer.parseInt(args[argindex]);
         props.setProperty(THREAD_COUNT_PROPERTY, String.valueOf(tcount));
@@ -559,7 +564,7 @@ public final class Client {
         if (argindex >= args.length) {
           usageMessage();
           System.out.println("Missing argument value for -target.");
-          System.exit(0);
+          System.exit(1);
         }
         int ttarget = Integer.parseInt(args[argindex]);
         props.setProperty(TARGET_PROPERTY, String.valueOf(ttarget));
@@ -578,7 +583,7 @@ public final class Client {
         if (argindex >= args.length) {
           usageMessage();
           System.out.println("Missing argument value for -db.");
-          System.exit(0);
+          System.exit(1);
         }
         props.setProperty(DB_PROPERTY, args[argindex]);
         argindex++;
@@ -587,7 +592,7 @@ public final class Client {
         if (argindex >= args.length) {
           usageMessage();
           System.out.println("Missing argument value for -l.");
-          System.exit(0);
+          System.exit(1);
         }
         props.setProperty(LABEL_PROPERTY, args[argindex]);
         argindex++;
@@ -596,7 +601,7 @@ public final class Client {
         if (argindex >= args.length) {
           usageMessage();
           System.out.println("Missing argument value for -P.");
-          System.exit(0);
+          System.exit(1);
         }
         String propfile = args[argindex];
         argindex++;
@@ -607,7 +612,7 @@ public final class Client {
         } catch (IOException e) {
           System.out.println("Unable to open the properties file " + propfile);
           System.out.println(e.getMessage());
-          System.exit(0);
+          System.exit(1);
         }
 
         //Issue #5 - remove call to stringPropertyNames to make compilable under Java 1.5
@@ -622,13 +627,13 @@ public final class Client {
         if (argindex >= args.length) {
           usageMessage();
           System.out.println("Missing argument value for -p");
-          System.exit(0);
+          System.exit(1);
         }
         int eq = args[argindex].indexOf('=');
         if (eq < 0) {
           usageMessage();
           System.out.println("Argument '-p' expected to be in key=value format (e.g., -p operationcount=99999)");
-          System.exit(0);
+          System.exit(1);
         }
 
         String name = args[argindex].substring(0, eq);
@@ -638,7 +643,7 @@ public final class Client {
       } else {
         usageMessage();
         System.out.println("Unknown option " + args[argindex]);
-        System.exit(0);
+        System.exit(1);
       }
 
       if (argindex >= args.length) {
@@ -655,7 +660,7 @@ public final class Client {
         System.out.println("An argument specifier without corresponding value was found at the end of the supplied " +
             "command line arguments.");
       }
-      System.exit(0);
+      System.exit(1);
     }
 
     //overwrite file properties with properties from the command line
@@ -671,7 +676,7 @@ public final class Client {
 
     if (!checkRequiredProperties(props)) {
       System.out.println("Failed check required properties.");
-      System.exit(0);
+      System.exit(1);
     }
 
     return props;
