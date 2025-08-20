@@ -48,6 +48,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.Vector;
+import java.util.stream.Collectors;
 
 /**
  * Integration tests for the DynamoDB client using Scylla's Alternator interface
@@ -122,10 +123,10 @@ public class DynamoDBClientTest {
       if (testName.getMethodName().contains("SecondaryIndex")) {
         createTableRequest = createTableRequest.withAttributeDefinitions(
               new AttributeDefinition("y_id", ScalarAttributeType.S),
-              new AttributeDefinition("field0", ScalarAttributeType.S)
+              new AttributeDefinition(fieldName(0), ScalarAttributeType.S)
             ).withGlobalSecondaryIndexes(new GlobalSecondaryIndex()
               .withIndexName("field0-index")
-              .withKeySchema(new KeySchemaElement("field0", KeyType.HASH))
+              .withKeySchema(new KeySchemaElement(fieldName(0), KeyType.HASH))
               .withProjection(new Projection().withProjectionType(ProjectionType.ALL)));
       } else {
         createTableRequest = createTableRequest.withAttributeDefinitions(
@@ -208,12 +209,22 @@ public class DynamoDBClientTest {
     //assertThat(status, is(Status.NOT_FOUND)); // Probably bug in DynamoDBClient
   }
 
+  private String fieldName(int fieldNum) {
+    return "field" + fieldNum;
+  }
+  private String fieldValue(int rowNum, int fieldNum) {
+    return "value" + ((rowNum * 2) + fieldNum);
+  }
+  private String keyValue(int rowNum) {
+    return "user" + rowNum;
+  }
+
   private void insertRows(int count) {
-    for (int i = 1; i <= count; i++) {
+    for (int i = 0; i < count; i++) {
       Map<String, AttributeValue> item = new HashMap<>();
-      item.put("y_id", new AttributeValue("user" + i));
-      item.put("field0", new AttributeValue("value" + (2*i-1)));
-      item.put("field1", new AttributeValue("value" + (2*i)));
+      item.put("y_id", new AttributeValue(keyValue(i)));
+      item.put(fieldName(0), new AttributeValue(fieldValue(i, 0)));
+      item.put(fieldName(1), new AttributeValue(fieldValue(i, 1)));
 
       PutItemRequest putItemRequest = new PutItemRequest()
           .withTableName(TABLE())
@@ -225,41 +236,55 @@ public class DynamoDBClientTest {
   private void insertRow() {
     insertRows(1);
   }
+  private String fieldValue(int fieldNum) {
+    return fieldValue(0, fieldNum);
+  }
+  private String keyValue() {
+    return keyValue(0);
+  }
 
   @Test
   public void testRead() {
     insertRow();
 
     final HashMap<String, ByteIterator> result = new HashMap<>();
-    final Status status = ycsbClient.read(TABLE(), "user1", null, result);
+    final Status status = ycsbClient.read(TABLE(), keyValue(), null, result);
     assertThat(status, is(Status.OK));
     // Note: DynamoDB will only return the fields that exist, unlike Scylla
     assertThat(result.entrySet(), hasSize(3)); // y_id, field0, field1
 
     final Map<String, String> strResult = StringByteIterator.getStringMap(result);
-    assertThat(strResult, hasEntry("y_id", "user1"));
-    assertThat(strResult, hasEntry("field0", "value1"));
-    assertThat(strResult, hasEntry("field1", "value2"));
+    assertThat(strResult, hasEntry("y_id", keyValue()));
+    assertThat(strResult, hasEntry(fieldName(0), fieldValue(0)));
+    assertThat(strResult, hasEntry(fieldName(1), fieldValue(1)));
   }
 
   @Test
-  public void testReadSingleColumn() {
+  public void testReadSelectedColumns() {
     insertRow();
-    final HashMap<String, ByteIterator> result = new HashMap<>();
-    final Set<String> fields = Sets.newHashSet("field1");
-    final Status status = ycsbClient.read(TABLE(), "user1", fields, result);
-    assertThat(status, is(Status.OK));
-    assertThat(result.entrySet(), hasSize(1));
-    final Map<String, String> strResult = StringByteIterator.getStringMap(result);
-    assertThat(strResult, hasEntry("field1", "value2"));
+    for (Set<Integer> selected_fields : Sets.newHashSet(
+      Sets.newHashSet(1),
+      Sets.newHashSet(0, 1))) {
+      final Set<String> field_names = selected_fields.stream()
+        .map(field -> fieldName(field))
+        .collect(Collectors.toSet());
+      final HashMap<String, ByteIterator> result = new HashMap<>();
+      final Status status = ycsbClient.read(TABLE(), keyValue(), field_names, result);
+      assertThat(status, is(Status.OK));
+      assertThat(result.entrySet(), hasSize(selected_fields.size()));
+      final Map<String, String> strResult = StringByteIterator.getStringMap(result);
+      for (Integer field : selected_fields) {
+        assertThat(strResult, hasEntry(fieldName(field), fieldValue(field)));
+      }
+    }
   }
 
   @Test
   public void testInsert() {
     final String key = "key";
     final Map<String, String> input = new HashMap<>();
-    input.put("field0", "value1");
-    input.put("field1", "value2");
+    input.put(fieldName(0), fieldValue(0));
+    input.put(fieldName(1), fieldValue(1));
 
     final Status status = ycsbClient.insert(TABLE(), key, StringByteIterator.getByteIteratorMap(input));
     assertThat(status, is(Status.OK));
@@ -271,43 +296,43 @@ public class DynamoDBClientTest {
 
     GetItemResult getItemResult = awsClient.getItem(getItemRequest);
     assertThat(getItemResult.getItem(), notNullValue());
-    assertThat(getItemResult.getItem().get("field0").getS(), is("value1"));
-    assertThat(getItemResult.getItem().get("field1").getS(), is("value2"));
+    assertThat(getItemResult.getItem().get(fieldName(0)).getS(), is(fieldValue(0)));
+    assertThat(getItemResult.getItem().get(fieldName(1)).getS(), is(fieldValue(1)));
   }
 
   @Test
   public void testUpdate() {
     insertRow();
     final Map<String, String> input = new HashMap<>();
-    input.put("field0", "new-value1");
-    input.put("field1", "new-value2");
+    input.put(fieldName(0), "new-value1");
+    input.put(fieldName(1), "new-value2");
 
-    final Status status = ycsbClient.update(TABLE(), "user1",
+    final Status status = ycsbClient.update(TABLE(), keyValue(),
         StringByteIterator.getByteIteratorMap(input));
     assertThat(status, is(Status.OK));
 
     // Verify result
     GetItemRequest getItemRequest = new GetItemRequest()
         .withTableName(TABLE())
-        .withKey(Map.of("y_id", new AttributeValue("user1")));
+        .withKey(Map.of("y_id", new AttributeValue(keyValue())));
 
     GetItemResult getItemResult = awsClient.getItem(getItemRequest);
     assertThat(getItemResult.getItem(), notNullValue());
-    assertThat(getItemResult.getItem().get("field0").getS(), is("new-value1"));
-    assertThat(getItemResult.getItem().get("field1").getS(), is("new-value2"));
+    assertThat(getItemResult.getItem().get(fieldName(0)).getS(), is("new-value1"));
+    assertThat(getItemResult.getItem().get(fieldName(1)).getS(), is("new-value2"));
   }
 
   @Test
   public void testDelete() {
     insertRow();
 
-    final Status status = ycsbClient.delete(TABLE(), "user1");
+    final Status status = ycsbClient.delete(TABLE(), keyValue());
     assertThat(status, is(Status.OK));
 
     // Verify result
     GetItemRequest getItemRequest = new GetItemRequest()
         .withTableName(TABLE())
-        .withKey(Map.of("y_id", new AttributeValue("user1")));
+        .withKey(Map.of("y_id", new AttributeValue(keyValue())));
 
     GetItemResult getItemResult = awsClient.getItem(getItemRequest);
     assertThat(getItemResult.getItem(), nullValue());
@@ -320,11 +345,11 @@ public class DynamoDBClientTest {
       final Map<String, String> strResult = StringByteIterator.getStringMap(results.get(i));
       found.put(strResult.get("y_id"), strResult);
     }
-    for (int j = 1; j <= expected; j++) {
-      assertThat(found, hasKey("user" + j));
-      final Map<String, String> strResult = found.get("user" + j);
-      assertThat(strResult, hasEntry("field0", "value" + (2*j-1)));
-      assertThat(strResult, hasEntry("field1", "value" + (2*j)));
+    for (int j = 0; j < expected; j++) {
+      assertThat(found, hasKey(keyValue(j)));
+      final Map<String, String> strResult = found.get(keyValue(j));
+      assertThat(strResult, hasEntry(fieldName(0), fieldValue(j, 0)));
+      assertThat(strResult, hasEntry(fieldName(1), fieldValue(j, 1)));
     }
   }
   
@@ -333,12 +358,12 @@ public class DynamoDBClientTest {
     insertRows(3);
 
     Vector<HashMap<String, ByteIterator>> results = new Vector<>();
-    Status status = ycsbClient.scan(TABLE(), "user1", 1, null, results);
+    Status status = ycsbClient.scan(TABLE(), keyValue(), 1, null, results);
     assertRows(1, results);
 
-    for (int i = 1; i <= 3; i++) { // One of these should return 3 rows
+    for (int i = 0; i < 3; i++) { // One of these should return 3 rows
       results = new Vector<>();
-      status = ycsbClient.scan(TABLE(), "user" + i, 3, null, results);
+      status = ycsbClient.scan(TABLE(), keyValue(i), 3, null, results);
       if (results.size() == 3) {
         assertRows(3, results);
         return;
@@ -370,14 +395,14 @@ public class DynamoDBClientTest {
   public void testExclusiveScan() throws Exception {
     insertRows(3);
     updateClientProperties(Map.of("dynamodb.inclusiveScan", "false"));
-    for (int i = 1; i <= 3; i++) { // One of these should return 2 rows
+    for (int i = 0; i < 3; i++) { // One of these should return 2 rows
       Vector<HashMap<String, ByteIterator>> results = new Vector<>();
-      Status status = ycsbClient.scan(TABLE(), "user" + i, 3, null, results);
+      Status status = ycsbClient.scan(TABLE(), keyValue(i), 3, null, results);
       if (results.size() == 2) {
         results.add(new HashMap<>(Map.of(
-            "y_id", new StringByteIterator("user" + i),
-            "field0", new StringByteIterator("value" + (2*i-1)),
-            "field1", new StringByteIterator("value" + (2*i))
+            "y_id", new StringByteIterator(keyValue(i)),
+            fieldName(0), new StringByteIterator(fieldValue(i, 0)),
+            fieldName(1), new StringByteIterator(fieldValue(i, 1))
         ))); // Add dummy row for the skipped one
         assertRows(3, results);
         return;
@@ -393,7 +418,7 @@ public class DynamoDBClientTest {
       testInsert();
       testUpdate();
       testRead();
-      testReadSingleColumn();
+      testReadSelectedColumns();
       testReadMissingRow();
       testDelete();
     }
@@ -420,27 +445,26 @@ public class DynamoDBClientTest {
     }
 
     // Test reading from secondary index using YCSB client
-    updateClientProperties(Map.of("dynamodb.primaryKey", "field0"));
+    updateClientProperties(Map.of("dynamodb.primaryKey", fieldName(0)));
     HashMap<String, ByteIterator> result = new HashMap<>();
-    Status status = ycsbClient.read(indexTableName, "value1", null, result);
+    Status status = ycsbClient.read(indexTableName, fieldValue(0), null, result);
     assertThat(status, is(Status.OK));
     assertRows(1, new Vector<>(java.util.List.of(result)));
 
     // Test scan operation on secondary index using YCSB client
     updateClientProperties(Map.of(
         "dynamodb.hashKeyName", "y_id",
-        "dynamodb.hashKeyValue", "user1",
+        "dynamodb.hashKeyValue", keyValue(),
         "dynamodb.primaryKeyType", "HASH_AND_RANGE"));
     Vector<HashMap<String, ByteIterator>> results = new Vector<>();
-    status = ycsbClient.scan(indexTableName, "value1", 1, null, results);
+    status = ycsbClient.scan(indexTableName, fieldValue(0), 1, null, results);
     assertThat(status, is(Status.OK));
     assertRows(1, results);
 
-    for (int i = 1; i <= 3; i++) { // One of these should return 3 rows
+    for (int i = 0; i < 3; i++) { // One of these should return 3 rows
       results = new Vector<>();
-      status = ycsbClient.scan(indexTableName, "value" + (2*i-1), 3, null, results);
+      status = ycsbClient.scan(indexTableName, fieldValue(i, 0), 3, null, results);
       assertThat(status, is(Status.OK));
-      assertThat(results.size(), is(3));
       if (results.size() == 3) {
         assertRows(3, results);
         return;
