@@ -23,27 +23,24 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
+import com.datastax.driver.core.*;
+import com.datastax.driver.core.policies.RoundRobinPolicy;
+import com.datastax.driver.core.policies.TokenAwarePolicy;
 import com.google.common.collect.Sets;
 
-import com.datastax.driver.core.ResultSet;
-import com.datastax.driver.core.Row;
-import com.datastax.driver.core.Session;
-import com.datastax.driver.core.Statement;
 import com.datastax.driver.core.querybuilder.Insert;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.core.querybuilder.Select;
+
+import org.junit.*;
 import site.ycsb.ByteIterator;
 import site.ycsb.Status;
 import site.ycsb.StringByteIterator;
 import site.ycsb.measurements.Measurements;
 import site.ycsb.workloads.CoreWorkload;
 
-import org.cassandraunit.CassandraCQLUnit;
-import org.cassandraunit.dataset.cql.ClassPathCQLDataSet;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.ClassRule;
-import org.junit.Test;
+import org.testcontainers.utility.DockerImageName;
+import org.testcontainers.scylladb.ScyllaDBContainer;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -62,16 +59,34 @@ public class ScyllaCQLClientTest {
   private final static int PORT = 9142;
   private final static String DEFAULT_ROW_KEY = "user1";
 
+  private static Cluster cluster;
+
   private ScyllaCQLClient client;
   private Session session;
 
   @ClassRule
-  public static CassandraCQLUnit unit = new CassandraCQLUnit(
-    new ClassPathCQLDataSet("ycsb.cql", "ycsb"), null, timeout);
+  public static ScyllaDBContainer scyllaContainer =
+      new ScyllaDBContainer(DockerImageName.parse("scylladb/scylla:2025.1"));
+
+  @BeforeClass
+  public static void setUpContainer() {
+    scyllaContainer.start();
+
+    final TokenAwarePolicy tokenAware = new TokenAwarePolicy(new RoundRobinPolicy());
+
+    cluster = Cluster.builder()
+        .addContactPoint(scyllaContainer.getContactPoint().getHostString())
+        .withLoadBalancingPolicy(tokenAware)
+        .build();
+  }
 
   @Before
   public void setUp() throws Exception {
-    session = unit.getSession();
+    session = cluster.connect();
+
+    // Initialize keyspace or schema if needed
+    session.execute("CREATE KEYSPACE IF NOT EXISTS  " + TABLE + " " +
+        "WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};");
 
     Properties p = new Properties();
     p.setProperty("scylla.hosts", HOST);
@@ -100,9 +115,7 @@ public class ScyllaCQLClientTest {
   public void clearTable() {
     // Clear the table so that each test starts fresh.
     final Statement truncate = QueryBuilder.truncate(TABLE);
-    if (unit != null) {
-      unit.getSession().execute(truncate);
-    }
+    session.execute(truncate);
   }
 
   @Test
@@ -188,8 +201,8 @@ public class ScyllaCQLClientTest {
     input.put("field1", "new-value2");
 
     final Status status = client.update(TABLE,
-                                        DEFAULT_ROW_KEY,
-                                        StringByteIterator.getByteIteratorMap(input));
+        DEFAULT_ROW_KEY,
+        StringByteIterator.getByteIteratorMap(input));
     assertThat(status, is(Status.OK));
 
     // Verify result
