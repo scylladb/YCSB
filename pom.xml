@@ -16,7 +16,8 @@ permissions and limitations under the License. See accompanying
 LICENSE file.
 -->
 
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>site.ycsb</groupId>
@@ -109,51 +110,51 @@ LICENSE file.
   <properties>
     <maven.assembly.version>2.5.5</maven.assembly.version>
     <maven.dependency.version>2.10</maven.dependency.version>
-    <java.source>1.8</java.source>
-    <java.target>1.8</java.target>
-
-    <!-- datastore binding versions, lex sorted -->
-    <accumulo.1.9.version>1.9.3</accumulo.1.9.version>
-    <aerospike.version>3.1.2</aerospike.version>
-    <arangodb.version>4.4.1</arangodb.version>
-    <asynchbase.version>1.8.2</asynchbase.version>
-    <azurecosmos.version>4.8.0</azurecosmos.version>
-    <azurestorage.version>4.0.0</azurestorage.version>
-    <cassandra.cql.version>3.0.0</cassandra.cql.version>
-    <cloudspanner.version>6.91.1</cloudspanner.version>
-    <couchbase.version>1.4.10</couchbase.version>
-		<couchbase2.version>2.3.1</couchbase2.version>
-		<crail.version>1.1-incubating</crail.version>
-    <elasticsearch5-version>5.5.1</elasticsearch5-version>
-    <foundationdb.version>5.2.5</foundationdb.version>
-    <geode.version>1.2.0</geode.version>
-    <!-- deprecated, please use googlebigtable2 -->
-    <googlebigtable.version>1.4.0</googlebigtable.version>
-    <googlebigtable2.version>2.47.0</googlebigtable2.version>
-    <griddb.version>4.0.0</griddb.version>
-    <hbase1.version>1.4.12</hbase1.version>
-    <hbase2.version>2.2.3</hbase2.version>
-    <ignite.version>2.7.6</ignite.version>
-    <infinispan.version>7.2.2.Final</infinispan.version>
-    <kudu.version>1.11.1</kudu.version>
-    <maprhbase.version>1.1.8-mapr-1710</maprhbase.version>
-    <mongodb.version>5.1.0</mongodb.version>
-    <mongodb.async.version>2.0.1</mongodb.async.version>
-    <openjpa.jdbc.version>2.1.1</openjpa.jdbc.version>
-    <orientdb.version>2.2.37</orientdb.version>
-    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <redis.version>2.9.0</redis.version>
-    <riak.version>2.0.5</riak.version>
-    <rocksdb.version>6.2.2</rocksdb.version>
+    <java.source>21</java.source>
+    <java.target>21</java.target>
     <s3.version>1.10.20</s3.version>
-    <seaweed.client.version>1.4.1</seaweed.client.version>
     <scylla.cql.version>3.10.2-scylla-1</scylla.cql.version>
-    <solr7.version>7.7.2</solr7.version>
-    <tarantool.version>1.6.5</tarantool.version>
-    <thrift.version>0.8.0</thrift.version>
-    <tablestore.version>4.8.0</tablestore.version>
-    <voltdb.version>10.1.1</voltdb.version>
-    <zookeeper.version>3.5.8</zookeeper.version>
+
+    <!-- datastore binding versions, lex sorted - NOT NEEDED FOR SCYLLADB usecase -->
+<!--    <accumulo.1.9.version>1.9.3</accumulo.1.9.version>-->
+<!--    <aerospike.version>3.1.2</aerospike.version>-->
+<!--    <arangodb.version>4.4.1</arangodb.version>-->
+<!--    <asynchbase.version>1.8.2</asynchbase.version>-->
+<!--    <azurecosmos.version>4.8.0</azurecosmos.version>-->
+<!--    <azurestorage.version>4.0.0</azurestorage.version>-->
+<!--    <cassandra.cql.version>3.0.0</cassandra.cql.version>-->
+<!--    <cloudspanner.version>6.91.1</cloudspanner.version>-->
+<!--    <couchbase.version>1.4.10</couchbase.version>-->
+<!--    <couchbase2.version>2.3.1</couchbase2.version>-->
+<!--    <crail.version>1.1-incubating</crail.version>-->
+<!--    <elasticsearch5-version>5.5.1</elasticsearch5-version>-->
+<!--    <foundationdb.version>5.2.5</foundationdb.version>-->
+<!--    <geode.version>1.2.0</geode.version>-->
+    <!-- deprecated, please use googlebigtable2 -->
+<!--    <googlebigtable.version>1.4.0</googlebigtable.version>-->
+<!--    <googlebigtable2.version>2.47.0</googlebigtable2.version>-->
+<!--    <griddb.version>4.0.0</griddb.version>-->
+<!--    <hbase1.version>1.4.12</hbase1.version>-->
+<!--    <hbase2.version>2.2.3</hbase2.version>-->
+<!--    <ignite.version>2.7.6</ignite.version>-->
+<!--    <infinispan.version>7.2.2.Final</infinispan.version>-->
+<!--    <kudu.version>1.11.1</kudu.version>-->
+<!--    <maprhbase.version>1.1.8-mapr-1710</maprhbase.version>-->
+<!--    <mongodb.version>5.1.0</mongodb.version>-->
+<!--    <mongodb.async.version>2.0.1</mongodb.async.version>-->
+<!--    <openjpa.jdbc.version>2.1.1</openjpa.jdbc.version>-->
+<!--    <orientdb.version>2.2.37</orientdb.version>-->
+<!--    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>-->
+<!--    <redis.version>2.9.0</redis.version>-->
+<!--    <riak.version>2.0.5</riak.version>-->
+<!--    <rocksdb.version>6.2.2</rocksdb.version>-->
+<!--    <seaweed.client.version>1.4.1</seaweed.client.version>-->
+<!--    <solr7.version>7.7.2</solr7.version>-->
+<!--    <tarantool.version>1.6.5</tarantool.version>-->
+<!--    <thrift.version>0.8.0</thrift.version>-->
+<!--    <tablestore.version>4.8.0</tablestore.version>-->
+<!--    <voltdb.version>10.1.1</voltdb.version>-->
+<!--    <zookeeper.version>3.5.8</zookeeper.version>-->
   </properties>
 
   <modules>
@@ -162,52 +163,54 @@ LICENSE file.
     <module>binding-parent</module>
     <module>distribution</module>
     <!-- all the datastore bindings, lex sorted please -->
-    <module>accumulo1.9</module>
-    <module>aerospike</module>
-    <module>arangodb</module>
-    <module>asynchbase</module>
-    <module>azurecosmos</module>
-    <module>azuretablestorage</module>
-    <module>cassandra</module>
-    <module>cloudspanner</module>
-    <module>couchbase</module>
-		<module>couchbase2</module>
-		<module>crail</module>
-    <module>dynamodb</module>
-    <module>elasticsearch</module>
-    <module>elasticsearch5</module>
-    <module>foundationdb</module>
-    <module>geode</module>
-    <module>googlebigtable</module>
-    <module>googlebigtable2</module>
-    <module>googledatastore</module>
-    <module>griddb</module>
-    <module>hbase1</module>
-    <module>hbase2</module>
-    <module>ignite</module>
-    <module>infinispan</module>
-    <module>jdbc</module>
-    <module>kudu</module>
-    <module>maprdb</module>
-    <module>maprjsondb</module>
-    <module>memcached</module>
-    <module>mongodb</module>
-    <module>nosqldb</module>
-    <module>orientdb</module>
-    <module>postgrenosql</module>
-    <module>rados</module>
-    <module>redis</module>
-    <module>rest</module>
-    <module>riak</module>
-    <module>rocksdb</module>
-    <module>s3</module>
-    <module>seaweedfs</module>
     <module>scylla</module>
-    <module>solr7</module>
-    <module>tarantool</module>
-    <module>tablestore</module>
-    <module>voltdb</module>
-    <module>zookeeper</module>
+    <module>dynamodb</module>
+
+    <!-- NOT NEEDED FOR SCYLLADB usecase -->
+    <!--    <module>accumulo1.9</module>-->
+    <!--    <module>aerospike</module>-->
+    <!--    <module>arangodb</module>-->
+    <!--    <module>asynchbase</module>-->
+    <!--    <module>azurecosmos</module>-->
+    <!--    <module>azuretablestorage</module>-->
+    <!--    <module>cassandra</module>-->
+    <!--    <module>cloudspanner</module>-->
+    <!--    <module>couchbase</module>-->
+    <!--		<module>couchbase2</module>-->
+    <!--		<module>crail</module>-->
+    <!--    <module>elasticsearch</module>-->
+    <!--    <module>elasticsearch5</module>-->
+    <!--    <module>foundationdb</module>-->
+    <!--    <module>geode</module>-->
+    <!--    <module>googlebigtable</module>-->
+    <!--    <module>googlebigtable2</module>-->
+    <!--    <module>googledatastore</module>-->
+    <!--    <module>griddb</module>-->
+    <!--    <module>hbase1</module>-->
+    <!--    <module>hbase2</module>-->
+    <!--    <module>ignite</module>-->
+    <!--    <module>infinispan</module>-->
+    <!--    <module>jdbc</module>-->
+    <!--    <module>kudu</module>-->
+    <!--    <module>maprdb</module>-->
+    <!--    <module>maprjsondb</module>-->
+    <!--    <module>memcached</module>-->
+    <!--    <module>mongodb</module>-->
+    <!--    <module>nosqldb</module>-->
+    <!--    <module>orientdb</module>-->
+    <!--    <module>postgrenosql</module>-->
+    <!--    <module>rados</module>-->
+    <!--    <module>redis</module>-->
+    <!--    <module>rest</module>-->
+    <!--    <module>riak</module>-->
+    <!--    <module>rocksdb</module>-->
+    <!--    <module>s3</module>-->
+    <!--    <module>seaweedfs</module>-->
+    <!--    <module>solr7</module>-->
+    <!--    <module>tarantool</module>-->
+    <!--    <module>tablestore</module>-->
+    <!--    <module>voltdb</module>-->
+    <!--    <module>zookeeper</module>-->
   </modules>
 
   <build>

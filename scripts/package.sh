@@ -16,7 +16,6 @@ mvn versions:set -DnewVersion="$VERSION"
 mvn versions:commit
 
 mvn -ff \
-  -pl site.ycsb:scylla-binding,site.ycsb:dynamodb-binding \
   -am clean package \
   -Djava.source="$JAVA" \
   -Djava.target="$JAVA" \

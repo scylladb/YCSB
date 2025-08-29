@@ -23,28 +23,27 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
+import com.datastax.driver.core.*;
+import com.datastax.driver.core.policies.RoundRobinPolicy;
+import com.datastax.driver.core.policies.TokenAwarePolicy;
 import com.google.common.collect.Sets;
 
-import com.datastax.driver.core.ResultSet;
-import com.datastax.driver.core.Row;
-import com.datastax.driver.core.Session;
-import com.datastax.driver.core.Statement;
 import com.datastax.driver.core.querybuilder.Insert;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.core.querybuilder.Select;
+
+import org.junit.*;
 import site.ycsb.ByteIterator;
 import site.ycsb.Status;
 import site.ycsb.StringByteIterator;
 import site.ycsb.measurements.Measurements;
 import site.ycsb.workloads.CoreWorkload;
+import org.testcontainers.utility.DockerImageName;
+import org.testcontainers.scylladb.ScyllaDBContainer;
 
-import org.cassandraunit.CassandraCQLUnit;
-import org.cassandraunit.dataset.cql.ClassPathCQLDataSet;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.ClassRule;
-import org.junit.Test;
-
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -58,24 +57,81 @@ public class ScyllaCQLClientTest {
   private final static long timeout = 120000L;
 
   private final static String TABLE = "usertable";
-  private final static String HOST = "localhost";
-  private final static int PORT = 9142;
   private final static String DEFAULT_ROW_KEY = "user1";
+  private final static String KEYSPACE = "ycsb";
+
+  private static String HOST;
+  private static int PORT;
+
+  private static Cluster cluster;
 
   private ScyllaCQLClient client;
   private Session session;
 
-  @ClassRule
-  public static CassandraCQLUnit unit = new CassandraCQLUnit(
-    new ClassPathCQLDataSet("ycsb.cql", "ycsb"), null, timeout);
+  public static ScyllaDBContainer scyllaContainer;
+
+  @BeforeClass
+  public static void setUpContainer() {
+    try {
+      // Determine Scylla image from system properties, with sensible defaults
+      // -Dscylla.image takes precedence. Otherwise built from -Dscylla.version (defaults to 2025.1)
+      final String version = System.getProperty("scylla.version", "2025.1");
+      final String imageProp = System.getProperty("scylla.image");
+      final String image = (imageProp != null && !imageProp.isEmpty()) ? imageProp : ("scylladb/scylla:" + version);
+
+      scyllaContainer = new ScyllaDBContainer(DockerImageName.parse(image));
+      scyllaContainer.start();
+
+      HOST = scyllaContainer.getHost();
+      PORT = scyllaContainer.getMappedPort(9042);
+
+      final TokenAwarePolicy tokenAware = new TokenAwarePolicy(new RoundRobinPolicy());
+
+      cluster = Cluster.builder()
+          .addContactPoint(HOST)
+          .withPort(PORT)
+          .withLoadBalancingPolicy(tokenAware)
+          .build();
+
+      // Ensure keyspace exists
+      Session tmp = cluster.connect();
+      tmp.execute("CREATE KEYSPACE IF NOT EXISTS " + KEYSPACE + " WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};");
+      tmp.close();
+    } catch (Throwable t) {
+      Assume.assumeTrue("Skipping Scylla tests because Docker/Testcontainers is not available: " + t.getMessage(), false);
+    }
+  }
+
+  private void createTableFromCqlFile() throws IOException {
+    try (InputStream inputStream = getClass().getResourceAsStream("/ycsb.cql")) {
+      if (inputStream == null) {
+        throw new IOException("ycsb.cql file not found in resources");
+      }
+
+      String cqlContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+
+      // Replace the table name and key name, and make it CREATE TABLE IF NOT EXISTS
+      String createTableStmt = cqlContent
+          .replaceAll("usertable", TABLE)
+          .replaceAll("y_id", ScyllaCQLClient.YCSB_KEY)
+          .replaceAll("/\\*[\\s\\S]*?\\*/", "") // Remove comments
+          .trim();
+
+      session.execute(createTableStmt);
+    }
+  }
 
   @Before
   public void setUp() throws Exception {
-    session = unit.getSession();
+    session = cluster.connect(KEYSPACE);
+
+    // Create table using the CQL file from resources
+    createTableFromCqlFile();
 
     Properties p = new Properties();
     p.setProperty("scylla.hosts", HOST);
     p.setProperty("scylla.port", Integer.toString(PORT));
+    p.setProperty("scylla.keyspace", KEYSPACE);
     p.setProperty("scylla.table", TABLE);
 
     Measurements.setProperties(p);
@@ -100,9 +156,7 @@ public class ScyllaCQLClientTest {
   public void clearTable() {
     // Clear the table so that each test starts fresh.
     final Statement truncate = QueryBuilder.truncate(TABLE);
-    if (unit != null) {
-      unit.getSession().execute(truncate);
-    }
+    session.execute(truncate);
   }
 
   @Test
@@ -188,8 +242,8 @@ public class ScyllaCQLClientTest {
     input.put("field1", "new-value2");
 
     final Status status = client.update(TABLE,
-                                        DEFAULT_ROW_KEY,
-                                        StringByteIterator.getByteIteratorMap(input));
+        DEFAULT_ROW_KEY,
+        StringByteIterator.getByteIteratorMap(input));
     assertThat(status, is(Status.OK));
 
     // Verify result
@@ -236,6 +290,18 @@ public class ScyllaCQLClientTest {
       testReadSingleColumn();
       testReadMissingRow();
       testDelete();
+    }
+  }
+
+  @AfterClass
+  public static void tearDownContainer() {
+    if (cluster != null) {
+      cluster.close();
+      cluster = null;
+    }
+    if (scyllaContainer != null) {
+      scyllaContainer.stop();
+      scyllaContainer = null;
     }
   }
 }
