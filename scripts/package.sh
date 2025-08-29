@@ -3,7 +3,7 @@
 set -euo pipefail
 
 VERSION="${1:-"0.18.0-SNAPSHOT"}"
-JAVA="${2:-11}"
+JAVA="${2:-21}"
 
 if [ -z "$VERSION" ]; then
   echo "Usage: $0 <version>"

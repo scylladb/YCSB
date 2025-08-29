@@ -7,7 +7,7 @@ WORKDIR /app
 COPY . .
 
 RUN apt-get update && apt-get install -y maven \
-    && ./scripts/package.sh ${VERSION} ${INPUT_JAVA_VERSION}
+    && ./scripts/package.sh "${VERSION}" "${INPUT_JAVA_VERSION}"
 
 FROM eclipse-temurin:${INPUT_JAVA_VERSION}-jre-noble AS production
 

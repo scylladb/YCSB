@@ -28,6 +28,7 @@ jobs:
     uses: "./.github/workflows/docker.yml"
     with:
       version: "${{ needs.tag.outputs.version }}"
+      java_version: "21"
     secrets:
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
       REGISTRY: ${{ secrets.REGISTRY }}
@@ -47,9 +48,6 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ycsb-java8
-      - uses: actions/download-artifact@v4
-        with:
           name: ycsb-java21
       - name: Release
         uses: softprops/action-gh-release@v2
@@ -63,7 +61,6 @@ jobs:
           prerelease: false
           fail_on_unmatched_files: true
           files: |
-             scylla-ycsb-${{ needs.tag.outputs.version }}-java8.tar.gz
              scylla-ycsb-${{ needs.tag.outputs.version }}-java21.tar.gz
       - name: "Generate release changelog"
         uses: heinrichreimer/action-github-changelog-generator@v2.4

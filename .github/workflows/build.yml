@@ -48,7 +48,7 @@ jobs:
 
       - name: Artifacts
         run: |
-          ./scripts/package.sh ${{ inputs.version }}
+          ./scripts/package.sh ${{ inputs.version }} ${{ inputs.java }}
       - uses: actions/upload-artifact@v4
         with:
           name: ycsb-java${{ inputs.java }}

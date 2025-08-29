@@ -35,8 +35,8 @@ on:
         required: true
         type: string
       java_version:
-        default: "8"
-        required: false
+        default: "21"
+        required: true
         description: ""
         type: string
       docker_target:
