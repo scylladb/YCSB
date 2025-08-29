@@ -39,4 +39,4 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y maven
       - name: Run Tests
-        run: mvn -ff -pl site.ycsb:scylla-binding,site.ycsb:dynamodb-binding -am test -Djava.source="${{ matrix.java }}" -Djava.target="${{ matrix.java }}" -DskipTests=false
+        run: mvn -ff -am test -Djava.source="${{ matrix.java }}" -Djava.target="${{ matrix.java }}" -DskipTests=false
