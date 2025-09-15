@@ -12,20 +12,21 @@ on:
 
 jobs:
   packaging:
-    strategy:
-      fail-fast: true
-      matrix:
-        java: ["21"]
-    uses: "./.github/workflows/build.yml"
-    with:
-      version: "1.0.0"
-      java: "${{ matrix.java }}"
+   strategy:
+     fail-fast: true
+     matrix:
+       java: ["21"]
+   uses: "./.github/workflows/build.yml"
+   with:
+     version: "1.0.0"
+     java: "${{ matrix.java }}"
   tests:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: true
       matrix:
         java: ["21"]
+        scylla: ["2025.1", "2025.2"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,7 +37,17 @@ jobs:
           java-version: "${{ matrix.java }}"
       - name: Install Deps
         run: |
-          sudo apt-get update
-          sudo apt-get install -y maven
+          sudo apt-get update > /dev/null
+          sudo apt-get install -y maven > /dev/null
+      - name: Set up Docker
+        uses: docker/setup-docker-action@v4
+        with:
+          set-host: true
       - name: Run Tests
-        run: mvn -ff -pl site.ycsb:scylla-binding,site.ycsb:dynamodb-binding -am test -Djava.source="${{ matrix.java }}" -Djava.target="${{ matrix.java }}" -DskipTests=false
+        run: |
+          mvn clean install > /dev/null
+          mvn -ff -am test \
+            -Djava.source="${{ matrix.java }}" \
+            -Djava.target="${{ matrix.java }}" \
+            -DskipTests=false \
+            -Dscylla.version="${{ matrix.scylla }}"

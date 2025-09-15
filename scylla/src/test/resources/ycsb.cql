@@ -15,15 +15,15 @@
  * LICENSE file.
  */
 
-CREATE TABLE usertable (
-  y_id varchar primary key,
-  field0 varchar,
-  field1 varchar,
-  field2 varchar,
-  field3 varchar,
-  field4 varchar,
-  field5 varchar,
-  field6 varchar,
-  field7 varchar,
-  field8 varchar,
-  field9 varchar);
+CREATE TABLE IF NOT EXISTS usertable (
+  y_id text primary key,
+  field0 text,
+  field1 text,
+  field2 text,
+  field3 text,
+  field4 text,
+  field5 text,
+  field6 text,
+  field7 text,
+  field8 text,
+  field9 text);
