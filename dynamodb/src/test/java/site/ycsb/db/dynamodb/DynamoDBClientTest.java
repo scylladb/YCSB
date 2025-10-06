@@ -118,8 +118,19 @@ public class DynamoDBClientTest {
       CreateTableRequest createTableRequest = new CreateTableRequest()
           .withTableName(TABLE())
           .withKeySchema(new KeySchemaElement("y_id", KeyType.HASH))
-          .withAttributeDefinitions(new AttributeDefinition("y_id", ScalarAttributeType.S))
           .withBillingMode(BillingMode.PAY_PER_REQUEST);
+      if (testName.getMethodName().contains("SecondaryIndex")) {
+        createTableRequest = createTableRequest.withAttributeDefinitions(
+              new AttributeDefinition("y_id", ScalarAttributeType.S),
+              new AttributeDefinition("field0", ScalarAttributeType.S)
+            ).withGlobalSecondaryIndexes(new GlobalSecondaryIndex()
+              .withIndexName("field0-index")
+              .withKeySchema(new KeySchemaElement("field0", KeyType.HASH))
+              .withProjection(new Projection().withProjectionType(ProjectionType.ALL)));
+      } else {
+        createTableRequest = createTableRequest.withAttributeDefinitions(
+              new AttributeDefinition("y_id", ScalarAttributeType.S));
+      }
       awsClient.createTable(createTableRequest);
     } catch (ResourceInUseException e) {
       // Table already exists, ignore
@@ -129,8 +140,13 @@ public class DynamoDBClientTest {
     int attempts = 0;
     while (attempts < 30) {
       try {
-        DescribeTableResult result = awsClient.describeTable(TABLE());
-        if ("ACTIVE".equals(result.getTable().getTableStatus())) {
+        TableDescription result = awsClient.describeTable(TABLE()).getTable();
+        boolean tableActive = "ACTIVE".equals(result.getTableStatus());
+        boolean indexActive = result.getGlobalSecondaryIndexes() == null
+          || result.getGlobalSecondaryIndexes().stream().allMatch(
+                      gsi -> "ACTIVE".equals(gsi.getIndexStatus()));
+        
+        if (tableActive && indexActive) {
           return;
         }
       } catch (ResourceNotFoundException e) { }
@@ -331,6 +347,45 @@ public class DynamoDBClientTest {
     Assert.fail("Scan did not return expected number of rows");
   }
 
+  private void updateClientProperties(Map<String, String> newProps) {
+    Properties p = ycsbClient.getProperties();
+    for (Map.Entry<String, String> entry : newProps.entrySet()) {
+      p.setProperty(entry.getKey(), entry.getValue());
+    }
+    try {
+      ycsbClient.cleanup();
+    } catch (Exception e) {
+      // Ignore
+    }
+    ycsbClient = new DynamoDBClient();
+    ycsbClient.setProperties(p);
+    try {
+      ycsbClient.init();
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to reinitialize YCSB client with new properties", e);
+    }
+  }
+
+  @Test
+  public void testExclusiveScan() throws Exception {
+    insertRows(3);
+    updateClientProperties(Map.of("dynamodb.inclusiveScan", "false"));
+    for (int i = 1; i <= 3; i++) { // One of these should return 2 rows
+      Vector<HashMap<String, ByteIterator>> results = new Vector<>();
+      Status status = ycsbClient.scan(TABLE(), "user" + i, 3, null, results);
+      if (results.size() == 2) {
+        results.add(new HashMap<>(Map.of(
+            "y_id", new StringByteIterator("user" + i),
+            "field0", new StringByteIterator("value" + (2*i-1)),
+            "field1", new StringByteIterator("value" + (2*i))
+        ))); // Add dummy row for the skipped one
+        assertRows(3, results);
+        return;
+      }
+    }
+    Assert.fail("Scan did not return expected number of rows");
+  }
+
   @Test
   public void testMultipleOperations() {
     final int LOOP_COUNT = 3;
@@ -342,5 +397,55 @@ public class DynamoDBClientTest {
       testReadMissingRow();
       testDelete();
     }
+  }
+
+  @Test
+  public void testSecondaryIndex() throws Exception {
+    insertRows(3);
+    final String indexTableName = TABLE() + ":field0-index";
+
+    for (int i = 0; i < 10; i++) { // wait for index to be ready
+      Vector<HashMap<String, ByteIterator>> results = new Vector<>();
+      Status status = ycsbClient.scan(indexTableName, null, 3, null, results);
+      if (status == Status.OK && results.size() == 3) {
+        assertThat(status, is(Status.OK));
+        assertRows(3, results);
+        break;
+      }
+      if (i == 9) {
+        Assert.fail("Index not ready in time");
+      } else {
+        Thread.sleep(1000);
+      }
+    }
+
+    // Test reading from secondary index using YCSB client
+    updateClientProperties(Map.of("dynamodb.primaryKey", "field0"));
+    HashMap<String, ByteIterator> result = new HashMap<>();
+    Status status = ycsbClient.read(indexTableName, "value1", null, result);
+    assertThat(status, is(Status.OK));
+    assertRows(1, new Vector<>(java.util.List.of(result)));
+
+    // Test scan operation on secondary index using YCSB client
+    updateClientProperties(Map.of(
+        "dynamodb.hashKeyName", "y_id",
+        "dynamodb.hashKeyValue", "user1",
+        "dynamodb.primaryKeyType", "HASH_AND_RANGE"));
+    Vector<HashMap<String, ByteIterator>> results = new Vector<>();
+    status = ycsbClient.scan(indexTableName, "value1", 1, null, results);
+    assertThat(status, is(Status.OK));
+    assertRows(1, results);
+
+    for (int i = 1; i <= 3; i++) { // One of these should return 3 rows
+      results = new Vector<>();
+      status = ycsbClient.scan(indexTableName, "value" + (2*i-1), 3, null, results);
+      assertThat(status, is(Status.OK));
+      assertThat(results.size(), is(3));
+      if (results.size() == 3) {
+        assertRows(3, results);
+        return;
+      }
+    }
+    Assert.fail("Scan did not return expected number of rows");
   }
 }

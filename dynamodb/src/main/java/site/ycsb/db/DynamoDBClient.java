@@ -67,6 +67,7 @@ public class DynamoDBClient extends DB {
   private long ttlDuration;
 
   private boolean consistentRead = false;
+  private boolean inclusiveScan = true;
   private String region = "us-east-1";
   private String endpoint = null;
   private int maxConnects = 50;
@@ -89,6 +90,7 @@ public class DynamoDBClient extends DB {
     String ttlDurationConfiguration = getProperties().getProperty("dynamodb.ttlDuration", null);
     String primaryKeyTypeString = getProperties().getProperty("dynamodb.primaryKeyType", null);
     String consistentReads = getProperties().getProperty("dynamodb.consistentReads", null);
+    String inclusiveScans = getProperties().getProperty("dynamodb.inclusiveScan", null);
     String connectMax = getProperties().getProperty("dynamodb.connectMax", null);
     String configuredRegion = getProperties().getProperty("dynamodb.region", null);
 
@@ -98,6 +100,10 @@ public class DynamoDBClient extends DB {
 
     if (null != consistentReads && "true".equalsIgnoreCase(consistentReads)) {
       this.consistentRead = true;
+    }
+
+    if (null != inclusiveScans && "false".equalsIgnoreCase(inclusiveScans)) {
+      this.inclusiveScan = false;
     }
 
     if (null != configuredEndpoint) {
@@ -165,15 +171,13 @@ public class DynamoDBClient extends DB {
     }
   }
 
-  @Override
-  public Status read(String table, String key, Set<String> fields, Map<String, ByteIterator> result) {
-    if (LOGGER.isDebugEnabled()) {
-      LOGGER.debug("readkey: " + key + " from table: " + table);
-    }
-
-    GetItemRequest req = new GetItemRequest(table, createPrimaryKey(key));
+  private Status getItem(String table, Map<String, AttributeValue> key, Set<String> fields,
+                         Map<String, ByteIterator> result, boolean inScan) {
+    GetItemRequest req = new GetItemRequest(table, key);
     req.setAttributesToGet(fields);
-    req.setConsistentRead(consistentRead);
+    if (!inScan) {
+      req.setConsistentRead(consistentRead);
+    }
     GetItemResult res;
 
     try {
@@ -188,32 +192,36 @@ public class DynamoDBClient extends DB {
 
     if (null != res.getItem()) {
       result.putAll(extractResult(res.getItem()));
-      if (LOGGER.isDebugEnabled()) {
+      if (!inScan && LOGGER.isDebugEnabled()) {
         LOGGER.debug("Result: " + res.toString());
       }
     }
+
     return Status.OK;
   }
+  private Status getItem(String table, Map<String, AttributeValue> key, Set<String> fields,
+                         Map<String, ByteIterator> result) {
+    return getItem(table, key, fields, result, false);
+  }
 
-  @Override
-  public Status scan(String table, String startkey, int recordcount,
-                     Set<String> fields, Vector<HashMap<String, ByteIterator>> result) {
-
-    if (LOGGER.isDebugEnabled()) {
-      LOGGER.debug("scan " + recordcount + " records from key: " + startkey + " on table: " + table);
+  private Status query(String table, String indexName, Map<String, AttributeValue> key, int recordcount,
+                       Set<String> fields, Vector<HashMap<String, ByteIterator>> result) {
+    QueryRequest queryRequest = new QueryRequest(table);
+    queryRequest.setAttributesToGet(fields);
+    queryRequest.setLimit(recordcount);
+    if (!indexName.isEmpty()) {
+      queryRequest.setIndexName(indexName);
+    }
+    for (Map.Entry<String, AttributeValue> attr : key.entrySet()) {
+      Condition keycondition = new Condition()
+          .withComparisonOperator(ComparisonOperator.EQ)
+          .withAttributeValueList(attr.getValue());
+      queryRequest.addKeyConditionsEntry(attr.getKey(), keycondition);
     }
 
-    /*
-     * on DynamoDB's scan, startkey is *exclusive* so we need to
-     * getItem(startKey) and then use scan for the res
-    */
-    GetItemRequest greq = new GetItemRequest(table, createPrimaryKey(startkey));
-    greq.setAttributesToGet(fields);
-
-    GetItemResult gres;
-
+    QueryResult queryResult;
     try {
-      gres = dynamoDB.getItem(greq);
+      queryResult = dynamoDB.query(queryRequest);
     } catch (AmazonServiceException ex) {
       LOGGER.error(ex);
       return Status.ERROR;
@@ -222,17 +230,83 @@ public class DynamoDBClient extends DB {
       return CLIENT_ERROR;
     }
 
-    if (null != gres.getItem()) {
-      result.add(extractResult(gres.getItem()));
+    if (queryResult.getCount() > 0 && queryResult.getItems() != null) {
+      for (Map<String, AttributeValue> item : queryResult.getItems()) {
+        result.add(extractResult(item));
+      }
+    }
+    return Status.OK;
+  }
+
+  @Override
+  public Status read(String table, String key, Set<String> fields, Map<String, ByteIterator> result) {
+    String[] tableIndex = splitTableIndex(table);
+    if (tableIndex[1] == null) {
+      if (LOGGER.isDebugEnabled()) {
+        LOGGER.debug("readkey: " + key + " from table: " + tableIndex[0]);
+      }
+      return getItem(tableIndex[0], createPrimaryKey(key), fields, result);
+    } else {
+      if (LOGGER.isDebugEnabled()) {
+        LOGGER.debug("readkey: " + key + " from table: " + tableIndex[0] + " with index: " + tableIndex[1]);
+      }
+      Vector<HashMap<String, ByteIterator>> tempResult = new Vector<>();
+      Status ret = query(tableIndex[0], tableIndex[1], createPrimaryKey(key), 1, fields, tempResult);
+      if (ret == Status.OK && !tempResult.isEmpty()) {
+        result.putAll(tempResult.get(0));
+      }
+      return ret;
+    }
+  }
+
+  @Override
+  public Status scan(String table, String startkey, int recordcount,
+                     Set<String> fields, Vector<HashMap<String, ByteIterator>> result) {
+    String[] tableIndex = splitTableIndex(table);
+    table = tableIndex[0];
+
+    if (LOGGER.isDebugEnabled()) {
+      LOGGER.debug("scan " + recordcount + " records from key: " + startkey + " on table: " + table);
     }
 
-    int count = 1; // startKey is done, rest to go.
+    Map<String, AttributeValue> startKey = (startkey == null || startkey.isEmpty()) ? null : createPrimaryKey(startkey);
+    int count = 0;
+    if (startKey != null && this.inclusiveScan) {
+      /*
+      * on DynamoDB's scan, startkey is *exclusive* so we need to
+      * fetch 'startKey' and then use scan for the rest
+      */
+      Status start = Status.OK;
+      if (tableIndex[1] == null) {
+        HashMap<String, ByteIterator> tempResult = new HashMap<>();
+        start = getItem(table, startKey, fields, tempResult, true);
+        if (!tempResult.isEmpty()) {
+          result.add(tempResult);
+          count = 1;
+        }
+      } else {
+        Vector<HashMap<String, ByteIterator>> tempResult = new Vector<>();
+        start = query(tableIndex[0], tableIndex[1], startKey, recordcount, fields, tempResult);
+        if (!tempResult.isEmpty()) {
+          result.addAll(tempResult);
+          count = tempResult.size();
+        }
+      }
+      if (start != Status.OK) {
+        return start;
+      }
+      // startKey is done, rest to go.
+    }
 
-    Map<String, AttributeValue> startKey = createPrimaryKey(startkey);
     ScanRequest req = new ScanRequest(table);
+    if (tableIndex[1] != null && !tableIndex[1].isEmpty()) {
+      req.setIndexName(tableIndex[1]);
+    }
     req.setAttributesToGet(fields);
     while (count < recordcount) {
-      req.setExclusiveStartKey(startKey);
+      if (startKey != null) {
+        req.setExclusiveStartKey(startKey);
+      }
       req.setLimit(recordcount - count);
       ScanResult res;
       try {
@@ -250,7 +324,9 @@ public class DynamoDBClient extends DB {
         result.add(extractResult(items));
       }
       startKey = res.getLastEvaluatedKey();
-
+      if (null == startKey) {
+        break;
+      }
     }
 
     return Status.OK;
@@ -258,6 +334,7 @@ public class DynamoDBClient extends DB {
 
   @Override
   public Status update(String table, String key, Map<String, ByteIterator> values) {
+    table = splitTableIndex(table)[0];
     if (LOGGER.isDebugEnabled()) {
       LOGGER.debug("updatekey: " + key + " from table: " + table);
     }
@@ -290,6 +367,7 @@ public class DynamoDBClient extends DB {
 
   @Override
   public Status insert(String table, String key, Map<String, ByteIterator> values) {
+    table = splitTableIndex(table)[0];
     if (LOGGER.isDebugEnabled()) {
       LOGGER.debug("insertkey: " + primaryKeyName + "-" + key + " from table: " + table);
     }
@@ -324,6 +402,7 @@ public class DynamoDBClient extends DB {
 
   @Override
   public Status delete(String table, String key) {
+    table = splitTableIndex(table)[0];
     if (LOGGER.isDebugEnabled()) {
       LOGGER.debug("deletekey: " + key + " from table: " + table);
     }
@@ -376,5 +455,13 @@ public class DynamoDBClient extends DB {
       throw new RuntimeException("Assertion Error: impossible primary key type");
     }
     return k;
+  }
+
+  private String[] splitTableIndex(String table) {
+    String[] parts = table.split(":", 2);
+    if (parts.length < 2) {
+      return new String[]{parts[0], null};
+    }
+    return parts;
   }
 }
