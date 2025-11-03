@@ -287,6 +287,12 @@ public class DynamoDBClientTest {
     final Status status = ycsbClient.insert(TABLE(), key, StringByteIterator.getByteIteratorMap(input));
     assertThat(status, is(Status.OK));
 
+    if (ycsbClient.getProperties().getProperty("dynamodb.batchInsert", "false").equals("true")) {
+      try {
+        ycsbClient.cleanup(); // Ensure batch is flushed
+      } catch (Exception e) { }
+    }
+
     // Verify result
     GetItemRequest getItemRequest = GetItemRequest.builder()
         .tableName(TABLE())
@@ -297,6 +303,12 @@ public class DynamoDBClientTest {
     assertThat(getItemResult.hasItem(), is(true));
     assertThat(getItemResult.item().get(fieldName(0)).s(), is(fieldValue(0)));
     assertThat(getItemResult.item().get(fieldName(1)).s(), is(fieldValue(1)));
+  }
+
+  @Test
+  public void testBatchInsert() {
+    updateClientProperties(Map.of("dynamodb.batchInsert", "true"));
+    testInsert();
   }
 
   @Test

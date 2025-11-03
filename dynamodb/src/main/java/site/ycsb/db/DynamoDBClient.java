@@ -62,11 +62,14 @@ public class DynamoDBClient extends DB {
   private String ttlKeyName = null;
   private long ttlDuration;
 
+  private boolean useBatchInsert = false;
   private boolean consistentRead = false;
   private boolean inclusiveScan = true;
   private static final Logger LOGGER = Logger.getLogger(DynamoDBClient.class);
   private static final Status CLIENT_ERROR = new Status("CLIENT_ERROR", "An error occurred on the client.");
   private static final String DEFAULT_HASH_KEY_VALUE = "YCSB_0";
+  private static final int DYNAMODB_BATCH_WRITE_MAX_SIZE = 25;
+  private final Map<String, List<WriteRequest>> batchInsertItemBuffer = new HashMap<>();
 
   @Override
   public void init() throws DBException {
@@ -76,6 +79,7 @@ public class DynamoDBClient extends DB {
       LOGGER.setLevel(Level.DEBUG);
     }
 
+    String batchInsert = getProperties().getProperty("dynamodb.batchInsert", null);
     String primaryKey = getProperties().getProperty("dynamodb.primaryKey", null);
     String ttlKeyConfiguration = getProperties().getProperty("dynamodb.ttlKey", null);
     String ttlDurationConfiguration = getProperties().getProperty("dynamodb.ttlDuration", null);
@@ -83,6 +87,10 @@ public class DynamoDBClient extends DB {
     String consistentReads = getProperties().getProperty("dynamodb.consistentReads", null);
     String inclusiveScans = getProperties().getProperty("dynamodb.inclusiveScan", null);
     String useLegacy = getProperties().getProperty("dynamodb.useLegacyAPI", null);
+
+    if (null != batchInsert && "true".equalsIgnoreCase(batchInsert)) {
+      this.useBatchInsert = true;
+    }
 
     if (null != consistentReads && "true".equalsIgnoreCase(consistentReads)) {
       this.consistentRead = true;
@@ -466,15 +474,77 @@ public class DynamoDBClient extends DB {
           String.valueOf((System.currentTimeMillis() / 1000L) + this.ttlDuration)));
     }
     
-    PutItemRequest putItemRequest = PutItemRequest.builder().item(attributes).tableName(table).build();
-    try {
-      dynamoDbClient.putItem(putItemRequest);
-    } catch (AwsServiceException ex) {
-      LOGGER.error(ex);
-      return Status.ERROR;
-    } catch (SdkClientException ex) {
-      LOGGER.error(ex);
-      return CLIENT_ERROR;
+    if (useBatchInsert)  {
+      WriteRequest writeRequest = WriteRequest.builder()
+          .putRequest(PutRequest.builder()
+                  .item(attributes)
+                  .build()).build();
+      if (batchInsertItemBuffer.containsKey(table)) {
+        batchInsertItemBuffer.get(table).add(writeRequest);
+      } else {
+        batchInsertItemBuffer.put(table, new ArrayList<>(Arrays.asList(writeRequest)));
+      }
+      if (batchInsertItemBuffer.values().stream().mapToInt(List::size).sum() == DYNAMODB_BATCH_WRITE_MAX_SIZE) {
+        batchInsertItems();
+      }
+    } else {
+      PutItemRequest putItemRequest = PutItemRequest.builder().item(attributes).tableName(table).build();
+      try {
+        dynamoDbClient.putItem(putItemRequest);
+      } catch (AwsServiceException ex) {
+        LOGGER.error(ex);
+        return Status.ERROR;
+      } catch (SdkClientException ex) {
+        LOGGER.error(ex);
+        return CLIENT_ERROR;
+      }
+    }
+    return Status.OK;
+  }
+
+  private Status batchInsertItems() {
+    if (LOGGER.isDebugEnabled()) {
+      LOGGER.debug("batch write of " + batchInsertItemBuffer.values().stream().mapToInt(List::size).sum() + " items");
+    }
+    if (batchInsertItemBuffer.values().stream().mapToInt(List::size).sum() > 0) {
+      try {
+        boolean allItemsInserted = false;
+        int writeAttempts = 0;
+
+        // try to put the items in the DynamoDB table
+        // retry with an exponential backoff if the DynamoDB client
+        // could not process all items successfully
+        while (!allItemsInserted && writeAttempts <= 5) {
+          BatchWriteItemResponse response = dynamoDbClient.batchWriteItem(BatchWriteItemRequest.builder()
+              .requestItems(batchInsertItemBuffer)
+              .build());
+          writeAttempts++;
+          batchInsertItemBuffer.clear();
+          if (response.hasUnprocessedItems() &&
+              response.unprocessedItems().values().stream().mapToInt(List::size).sum() > 0) {
+            batchInsertItemBuffer.putAll(response.unprocessedItems());
+            try {
+              Thread.sleep(250 * (int)Math.pow(2, writeAttempts));
+            } catch (InterruptedException ie) {
+              if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("batchWriteItem sleep for exponential backoff & retry got interrupted");
+              }
+            }
+          } else {
+            allItemsInserted = true;
+          }
+        }
+        if (!allItemsInserted) {
+          LOGGER.error("Client failed to insert all the items in the batch");
+          return CLIENT_ERROR;
+        }
+      } catch (AwsServiceException ex) {
+        LOGGER.error(ex);
+        return Status.ERROR;
+      } catch (SdkClientException ex) {
+        LOGGER.error(ex);
+        return CLIENT_ERROR;
+      }
     }
     return Status.OK;
   }
@@ -498,6 +568,18 @@ public class DynamoDBClient extends DB {
       return CLIENT_ERROR;
     }
     return Status.OK;
+  }
+
+  /**
+   * Cleanup any state for this DB.
+   * Called once per DB instance; there is one DB instance per client thread.
+   */
+  @Override
+  public void cleanup() throws DBException {
+    if (useBatchInsert) {
+      // flush any remaining items to the DynamoDB table
+      batchInsertItems();
+    }
   }
 
   private static Map<String, AttributeValue> createAttributes(Map<String, ByteIterator> values) {
