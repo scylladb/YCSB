@@ -55,6 +55,7 @@ public class DynamoDBClient extends DB {
   }
 
   private AmazonDynamoDB dynamoDB;
+  private boolean useLegacyAPI = false;
   private String primaryKeyName;
   private PrimaryKeyType primaryKeyType = PrimaryKeyType.HASH;
 
@@ -93,6 +94,7 @@ public class DynamoDBClient extends DB {
     String inclusiveScans = getProperties().getProperty("dynamodb.inclusiveScan", null);
     String connectMax = getProperties().getProperty("dynamodb.connectMax", null);
     String configuredRegion = getProperties().getProperty("dynamodb.region", null);
+    String useLegacy = getProperties().getProperty("dynamodb.useLegacyAPI", null);
 
     if (null != connectMax) {
       this.maxConnects = Integer.parseInt(connectMax);
@@ -104,6 +106,10 @@ public class DynamoDBClient extends DB {
 
     if (null != inclusiveScans && "false".equalsIgnoreCase(inclusiveScans)) {
       this.inclusiveScan = false;
+    }
+
+    if (null != useLegacy && "true".equalsIgnoreCase(useLegacy)) {
+      this.useLegacyAPI = true;
     }
 
     if (null != configuredEndpoint) {
@@ -171,10 +177,33 @@ public class DynamoDBClient extends DB {
     }
   }
 
+  // DynamoDB has reserved words and signs, so lets alias all fields
+  private String getAlias(String prefix, Map<String, ?> existing) {
+    return prefix + "X" + existing.size();
+  }
+  private <V> String addAlias(String prefix, V field, Map<String, V> existing) {
+    String alias = getAlias(prefix, existing);
+    existing.put(alias, field);
+    return alias;
+  }
+  private Map<String, String> aliasFields(Set<String> fields, String prefix) {
+    Map<String, String> aliasedFields = new HashMap<>();
+    for (String field : fields) {
+      addAlias(prefix, field, aliasedFields);
+    }
+    return aliasedFields;
+  }
+
   private Status getItem(String table, Map<String, AttributeValue> key, Set<String> fields,
                          Map<String, ByteIterator> result, boolean inScan) {
     GetItemRequest req = new GetItemRequest(table, key);
-    req.setAttributesToGet(fields);
+    if (useLegacyAPI) {
+      req.setAttributesToGet(fields);
+    } else if (fields != null && !fields.isEmpty()) {
+      Map<String, String> aliases = aliasFields(fields, "#");
+      req.setExpressionAttributeNames(aliases);
+      req.setProjectionExpression(String.join(",", aliases.keySet()));
+    }
     if (!inScan) {
       req.setConsistentRead(consistentRead);
     }
@@ -207,16 +236,39 @@ public class DynamoDBClient extends DB {
   private Status query(String table, String indexName, Map<String, AttributeValue> key, int recordcount,
                        Set<String> fields, Vector<HashMap<String, ByteIterator>> result) {
     QueryRequest queryRequest = new QueryRequest(table);
-    queryRequest.setAttributesToGet(fields);
     queryRequest.setLimit(recordcount);
     if (!indexName.isEmpty()) {
       queryRequest.setIndexName(indexName);
     }
-    for (Map.Entry<String, AttributeValue> attr : key.entrySet()) {
-      Condition keycondition = new Condition()
-          .withComparisonOperator(ComparisonOperator.EQ)
-          .withAttributeValueList(attr.getValue());
-      queryRequest.addKeyConditionsEntry(attr.getKey(), keycondition);
+    
+    if (useLegacyAPI) {
+      queryRequest.setAttributesToGet(fields);
+      for (Map.Entry<String, AttributeValue> attr : key.entrySet()) {
+        Condition keycondition = new Condition()
+            .withComparisonOperator(ComparisonOperator.EQ)
+            .withAttributeValueList(attr.getValue());
+        queryRequest.addKeyConditionsEntry(attr.getKey(), keycondition);
+      }
+    } else {
+      Map<String, String> attrNames;
+      if (fields != null && !fields.isEmpty()) {
+        attrNames = aliasFields(fields, "#");
+        queryRequest.setProjectionExpression(String.join(",", attrNames.keySet()));
+      } else {
+        attrNames = new HashMap<>();
+      }
+      Map<String, AttributeValue> attrValues = new HashMap<>();
+      StringBuilder keyConditionExpression = new StringBuilder();
+      String separator = "";
+      for (Entry<String, AttributeValue> attr : key.entrySet()) {
+        String nameAlias = addAlias("#", attr.getKey(), attrNames);
+        String valueAlias = addAlias(":", attr.getValue(), attrValues);
+        keyConditionExpression.append(separator).append(nameAlias).append("=").append(valueAlias);
+        separator = " AND ";
+      }
+      queryRequest.setExpressionAttributeNames(attrNames);
+      queryRequest.setExpressionAttributeValues(attrValues);
+      queryRequest.setKeyConditionExpression(keyConditionExpression.toString());
     }
 
     QueryResult queryResult;
@@ -302,7 +354,13 @@ public class DynamoDBClient extends DB {
     if (tableIndex[1] != null && !tableIndex[1].isEmpty()) {
       req.setIndexName(tableIndex[1]);
     }
-    req.setAttributesToGet(fields);
+    if (useLegacyAPI) {
+      req.setAttributesToGet(fields);
+    } else if (fields != null && !fields.isEmpty()) {
+      Map<String, String> aliases = aliasFields(fields, "#");
+      req.setExpressionAttributeNames(aliases);
+      req.setProjectionExpression(String.join(",", aliases.keySet()));
+    }
     while (count < recordcount) {
       if (startKey != null) {
         req.setExclusiveStartKey(startKey);
@@ -339,19 +397,46 @@ public class DynamoDBClient extends DB {
       LOGGER.debug("updatekey: " + key + " from table: " + table);
     }
 
-    Map<String, AttributeValueUpdate> attributes = new HashMap<>(values.size());
-    for (Entry<String, ByteIterator> val : values.entrySet()) {
-      AttributeValue v = new AttributeValue(val.getValue().toString());
-      attributes.put(val.getKey(), new AttributeValueUpdate().withValue(v).withAction("PUT"));
-    }
+    UpdateItemRequest req = new UpdateItemRequest()
+        .withTableName(table)
+        .withKey(createPrimaryKey(key));
 
-    if (null != this.ttlKeyName) {
-      AttributeValue v = new AttributeValue().withN(
-          String.valueOf((System.currentTimeMillis() / 1000L) + this.ttlDuration));
-      attributes.put(this.ttlKeyName, new AttributeValueUpdate().withValue(v).withAction("PUT"));
-    }
+    if (useLegacyAPI) {
+      Map<String, AttributeValueUpdate> attributes = new HashMap<>(values.size());
+      for (Entry<String, ByteIterator> val : values.entrySet()) {
+        AttributeValue v = new AttributeValue(val.getValue().toString());
+        attributes.put(val.getKey(), new AttributeValueUpdate().withValue(v).withAction("PUT"));
+      }
 
-    UpdateItemRequest req = new UpdateItemRequest(table, createPrimaryKey(key), attributes);
+      if (null != this.ttlKeyName) {
+        AttributeValue v = new AttributeValue().withN(
+            String.valueOf((System.currentTimeMillis() / 1000L) + this.ttlDuration));
+        attributes.put(this.ttlKeyName, new AttributeValueUpdate().withValue(v).withAction("PUT"));
+      }
+      req.setAttributeUpdates(attributes);
+    } else {
+      Map<String, String> attrNames = new HashMap<>();
+      Map<String, AttributeValue> attrValues = new HashMap<>();
+      StringBuilder updateExpression = new StringBuilder();
+      String separator = "SET ";
+      for (Entry<String, ByteIterator> val : values.entrySet()) {
+        AttributeValue v = new AttributeValue(val.getValue().toString());
+        String nameAlias = addAlias("#", val.getKey(), attrNames);
+        String valueAlias = addAlias(":", v, attrValues);
+        updateExpression.append(separator).append(nameAlias).append("=").append(valueAlias);
+        separator = ",";
+      }
+      if (null != this.ttlKeyName) {
+        AttributeValue v = new AttributeValue().withN(
+            String.valueOf((System.currentTimeMillis() / 1000L) + this.ttlDuration));
+        String nameAlias = addAlias("#", this.ttlKeyName, attrNames);
+        String valueAlias = addAlias(":", v, attrValues);
+        updateExpression.append(separator).append(nameAlias).append("=").append(valueAlias);
+      }
+      req.setExpressionAttributeNames(attrNames);
+      req.setExpressionAttributeValues(attrValues);
+      req.setUpdateExpression(updateExpression.toString());
+    }
 
     try {
       dynamoDB.updateItem(req);
