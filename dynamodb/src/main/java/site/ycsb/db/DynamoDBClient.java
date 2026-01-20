@@ -16,25 +16,20 @@
 
 package site.ycsb.db;
 
-import com.amazonaws.AmazonClientException;
-import com.amazonaws.AmazonServiceException;
-import com.amazonaws.ClientConfiguration;
-import com.amazonaws.auth.AWSStaticCredentialsProvider;
-import com.amazonaws.auth.PropertiesCredentials;
-import com.amazonaws.client.builder.AwsClientBuilder;
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClientBuilder;
-import com.amazonaws.services.dynamodbv2.model.*;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.core.exception.SdkClientException;
+import software.amazon.awssdk.http.apache.ApacheHttpClient;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClientBuilder;
+import software.amazon.awssdk.services.dynamodb.model.*;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 import site.ycsb.*;
 
-import java.io.File;
-import java.util.HashMap;
-import java.util.Map;
+import java.net.URI;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.Set;
-import java.util.Vector;
 
 /**
  * DynamoDB client for YCSB.
@@ -54,7 +49,7 @@ public class DynamoDBClient extends DB {
     HASH_AND_RANGE
   }
 
-  private AmazonDynamoDB dynamoDB;
+  private volatile DynamoDbClient dynamoDbClient;
   private boolean useLegacyAPI = false;
   private String primaryKeyName;
   private PrimaryKeyType primaryKeyType = PrimaryKeyType.HASH;
@@ -69,9 +64,6 @@ public class DynamoDBClient extends DB {
 
   private boolean consistentRead = false;
   private boolean inclusiveScan = true;
-  private String region = "us-east-1";
-  private String endpoint = null;
-  private int maxConnects = 50;
   private static final Logger LOGGER = Logger.getLogger(DynamoDBClient.class);
   private static final Status CLIENT_ERROR = new Status("CLIENT_ERROR", "An error occurred on the client.");
   private static final String DEFAULT_HASH_KEY_VALUE = "YCSB_0";
@@ -84,21 +76,13 @@ public class DynamoDBClient extends DB {
       LOGGER.setLevel(Level.DEBUG);
     }
 
-    String configuredEndpoint = getProperties().getProperty("dynamodb.endpoint", null);
-    String credentialsFile = getProperties().getProperty("dynamodb.awsCredentialsFile", null);
     String primaryKey = getProperties().getProperty("dynamodb.primaryKey", null);
     String ttlKeyConfiguration = getProperties().getProperty("dynamodb.ttlKey", null);
     String ttlDurationConfiguration = getProperties().getProperty("dynamodb.ttlDuration", null);
     String primaryKeyTypeString = getProperties().getProperty("dynamodb.primaryKeyType", null);
     String consistentReads = getProperties().getProperty("dynamodb.consistentReads", null);
     String inclusiveScans = getProperties().getProperty("dynamodb.inclusiveScan", null);
-    String connectMax = getProperties().getProperty("dynamodb.connectMax", null);
-    String configuredRegion = getProperties().getProperty("dynamodb.region", null);
     String useLegacy = getProperties().getProperty("dynamodb.useLegacyAPI", null);
-
-    if (null != connectMax) {
-      this.maxConnects = Integer.parseInt(connectMax);
-    }
 
     if (null != consistentReads && "true".equalsIgnoreCase(consistentReads)) {
       this.consistentRead = true;
@@ -112,10 +96,6 @@ public class DynamoDBClient extends DB {
       this.useLegacyAPI = true;
     }
 
-    if (null != configuredEndpoint) {
-      this.endpoint = configuredEndpoint;
-    }
-
     if (null != ttlKeyConfiguration && null != ttlDurationConfiguration) {
       this.ttlKeyName = ttlKeyConfiguration;
       this.ttlDuration = Integer.parseInt(ttlDurationConfiguration);
@@ -127,6 +107,7 @@ public class DynamoDBClient extends DB {
     if (null == primaryKey || primaryKey.length() < 1) {
       throw new DBException("Missing primary key attribute name, cannot continue");
     }
+    this.primaryKeyName = primaryKey;
 
     if (null != primaryKeyTypeString) {
       try {
@@ -151,29 +132,34 @@ public class DynamoDBClient extends DB {
       this.hashKeyValue = getProperties().getProperty("dynamodb.hashKeyValue", DEFAULT_HASH_KEY_VALUE);
     }
 
-    if (null != configuredRegion && configuredRegion.length() > 0) {
-      region = configuredRegion;
-    }
+    // only create one DynamoDB client, used by all YCSB client threads
+    if (dynamoDbClient == null) {
+      synchronized (DynamoDbClient.class) {
+        if (dynamoDbClient == null) {
+          DynamoDbClientBuilder dynamoDbClientBuilder = DynamoDbClient.builder();
 
-    try {
-      AmazonDynamoDBClientBuilder dynamoDBBuilder = AmazonDynamoDBClientBuilder.standard();
-      dynamoDBBuilder = null == endpoint ?
-          dynamoDBBuilder.withRegion(this.region) :
-          dynamoDBBuilder.withEndpointConfiguration(
-              new AwsClientBuilder.EndpointConfiguration(this.endpoint, this.region)
-          );
-      dynamoDB = dynamoDBBuilder
-          .withClientConfiguration(
-              new ClientConfiguration()
-                  .withTcpKeepAlive(true)
-                  .withMaxConnections(this.maxConnects)
-          )
-          .withCredentials(new AWSStaticCredentialsProvider(new PropertiesCredentials(new File(credentialsFile))))
-          .build();
-      primaryKeyName = primaryKey;
-      LOGGER.info("dynamodb connection created with " + this.endpoint);
-    } catch (Exception e1) {
-      LOGGER.error("DynamoDBClient.init(): Could not initialize DynamoDB client.", e1);
+          Region region = Region.US_EAST_1;
+          String configuredRegion = getProperties().getProperty("dynamodb.region", null);
+          if (configuredRegion != null) {
+            region = Region.of(configuredRegion);
+          }
+          dynamoDbClientBuilder.region(region);
+
+          String configuredEndpoint = getProperties().getProperty("dynamodb.endpoint", null);
+          if (configuredEndpoint != null) {
+            dynamoDbClientBuilder.endpointOverride(URI.create(configuredEndpoint));
+          }
+
+          // we create the same number of HTTP threads as there are YCSB threads. YCSB default is "1"
+          String configuredThreadCount = getProperties().getProperty(Client.THREAD_COUNT_PROPERTY, "1");
+
+          dynamoDbClientBuilder.httpClient(ApacheHttpClient.builder()
+              .maxConnections(Integer.parseInt(configuredThreadCount))
+              .tcpKeepAlive(true)
+              .build());
+          this.dynamoDbClient = dynamoDbClientBuilder.build();
+        }
+      }
     }
   }
 
@@ -196,31 +182,34 @@ public class DynamoDBClient extends DB {
 
   private Status getItem(String table, Map<String, AttributeValue> key, Set<String> fields,
                          Map<String, ByteIterator> result, boolean inScan) {
-    GetItemRequest req = new GetItemRequest(table, key);
+    GetItemRequest.Builder getItemBuilder = GetItemRequest.builder()
+        .key(key)
+        .tableName(table);
+
     if (useLegacyAPI) {
-      req.setAttributesToGet(fields);
+      getItemBuilder.attributesToGet(fields);
     } else if (fields != null && !fields.isEmpty()) {
       Map<String, String> aliases = aliasFields(fields, "#");
-      req.setExpressionAttributeNames(aliases);
-      req.setProjectionExpression(String.join(",", aliases.keySet()));
+      getItemBuilder.expressionAttributeNames(aliases);
+      getItemBuilder.projectionExpression(String.join(",", aliases.keySet()));
     }
     if (!inScan) {
-      req.setConsistentRead(consistentRead);
+      getItemBuilder.consistentRead(consistentRead);
     }
-    GetItemResult res;
 
+    GetItemResponse res;
     try {
-      res = dynamoDB.getItem(req);
-    } catch (AmazonServiceException ex) {
+      res = dynamoDbClient.getItem(getItemBuilder.build());
+    } catch (AwsServiceException ex) {
       LOGGER.error(ex);
       return Status.ERROR;
-    } catch (AmazonClientException ex) {
+    } catch (SdkClientException ex) {
       LOGGER.error(ex);
       return CLIENT_ERROR;
     }
 
-    if (null != res.getItem()) {
-      result.putAll(extractResult(res.getItem()));
+    if (res.hasItem()) {
+      result.putAll(extractResult(res.item()));
       if (!inScan && LOGGER.isDebugEnabled()) {
         LOGGER.debug("Result: " + res.toString());
       }
@@ -235,25 +224,28 @@ public class DynamoDBClient extends DB {
 
   private Status query(String table, String indexName, Map<String, AttributeValue> key, int recordcount,
                        Set<String> fields, Vector<HashMap<String, ByteIterator>> result) {
-    QueryRequest queryRequest = new QueryRequest(table);
-    queryRequest.setLimit(recordcount);
+    QueryRequest.Builder queryRequestBuilder = QueryRequest.builder()
+        .tableName(table)
+        .limit(recordcount);
     if (!indexName.isEmpty()) {
-      queryRequest.setIndexName(indexName);
+      queryRequestBuilder.indexName(indexName);
     }
     
     if (useLegacyAPI) {
-      queryRequest.setAttributesToGet(fields);
+      queryRequestBuilder.attributesToGet(fields);
+      Map<String, Condition> keyConditions = new HashMap<>();
       for (Map.Entry<String, AttributeValue> attr : key.entrySet()) {
-        Condition keycondition = new Condition()
-            .withComparisonOperator(ComparisonOperator.EQ)
-            .withAttributeValueList(attr.getValue());
-        queryRequest.addKeyConditionsEntry(attr.getKey(), keycondition);
+        Condition keycondition = Condition.builder()
+            .comparisonOperator(ComparisonOperator.EQ)
+            .attributeValueList(attr.getValue()).build();
+        keyConditions.put(attr.getKey(), keycondition);
       }
+      queryRequestBuilder.keyConditions(keyConditions);
     } else {
       Map<String, String> attrNames;
       if (fields != null && !fields.isEmpty()) {
         attrNames = aliasFields(fields, "#");
-        queryRequest.setProjectionExpression(String.join(",", attrNames.keySet()));
+        queryRequestBuilder.projectionExpression(String.join(",", attrNames.keySet()));
       } else {
         attrNames = new HashMap<>();
       }
@@ -266,24 +258,24 @@ public class DynamoDBClient extends DB {
         keyConditionExpression.append(separator).append(nameAlias).append("=").append(valueAlias);
         separator = " AND ";
       }
-      queryRequest.setExpressionAttributeNames(attrNames);
-      queryRequest.setExpressionAttributeValues(attrValues);
-      queryRequest.setKeyConditionExpression(keyConditionExpression.toString());
+      queryRequestBuilder.expressionAttributeNames(attrNames);
+      queryRequestBuilder.expressionAttributeValues(attrValues);
+      queryRequestBuilder.keyConditionExpression(keyConditionExpression.toString());
     }
 
-    QueryResult queryResult;
+    QueryResponse res;
     try {
-      queryResult = dynamoDB.query(queryRequest);
-    } catch (AmazonServiceException ex) {
+      res = dynamoDbClient.query(queryRequestBuilder.build());
+    } catch (AwsServiceException ex) {
       LOGGER.error(ex);
       return Status.ERROR;
-    } catch (AmazonClientException ex) {
+    } catch (SdkClientException ex) {
       LOGGER.error(ex);
       return CLIENT_ERROR;
     }
 
-    if (queryResult.getCount() > 0 && queryResult.getItems() != null) {
-      for (Map<String, AttributeValue> item : queryResult.getItems()) {
+    if (res.count() > 0 && res.items() != null) {
+      for (Map<String, AttributeValue> item : res.items()) {
         result.add(extractResult(item));
       }
     }
@@ -350,41 +342,43 @@ public class DynamoDBClient extends DB {
       // startKey is done, rest to go.
     }
 
-    ScanRequest req = new ScanRequest(table);
+    ScanRequest.Builder scanRequestBuilder = ScanRequest.builder()
+        .tableName(table);
     if (tableIndex[1] != null && !tableIndex[1].isEmpty()) {
-      req.setIndexName(tableIndex[1]);
+      scanRequestBuilder.indexName(tableIndex[1]);
     }
     if (useLegacyAPI) {
-      req.setAttributesToGet(fields);
+      scanRequestBuilder.attributesToGet(fields);
     } else if (fields != null && !fields.isEmpty()) {
       Map<String, String> aliases = aliasFields(fields, "#");
-      req.setExpressionAttributeNames(aliases);
-      req.setProjectionExpression(String.join(",", aliases.keySet()));
+      scanRequestBuilder.expressionAttributeNames(aliases);
+      scanRequestBuilder.projectionExpression(String.join(",", aliases.keySet()));
     }
     while (count < recordcount) {
       if (startKey != null) {
-        req.setExclusiveStartKey(startKey);
+        scanRequestBuilder.exclusiveStartKey(startKey);
       }
-      req.setLimit(recordcount - count);
-      ScanResult res;
+      scanRequestBuilder.limit(recordcount - count);
+      ScanResponse res;
       try {
-        res = dynamoDB.scan(req);
-      } catch (AmazonServiceException ex) {
+        res = dynamoDbClient.scan(scanRequestBuilder.build());
+
+      } catch (AwsServiceException ex) {
         LOGGER.error(ex);
         return Status.ERROR;
-      } catch (AmazonClientException ex) {
+      } catch (SdkClientException ex) {
         LOGGER.error(ex);
         return CLIENT_ERROR;
       }
 
-      count += res.getCount();
-      for (Map<String, AttributeValue> items : res.getItems()) {
+      count += res.count();
+      for (Map<String, AttributeValue> items : res.items()) {
         result.add(extractResult(items));
       }
-      startKey = res.getLastEvaluatedKey();
-      if (null == startKey) {
+      if (!res.hasLastEvaluatedKey()) {
         break;
       }
+      startKey = res.lastEvaluatedKey();
     }
 
     return Status.OK;
@@ -397,53 +391,53 @@ public class DynamoDBClient extends DB {
       LOGGER.debug("updatekey: " + key + " from table: " + table);
     }
 
-    UpdateItemRequest req = new UpdateItemRequest()
-        .withTableName(table)
-        .withKey(createPrimaryKey(key));
+    UpdateItemRequest.Builder updateItemBuilder = UpdateItemRequest.builder()
+        .key(createPrimaryKey(key))
+        .tableName(table);
 
     if (useLegacyAPI) {
       Map<String, AttributeValueUpdate> attributes = new HashMap<>(values.size());
       for (Entry<String, ByteIterator> val : values.entrySet()) {
-        AttributeValue v = new AttributeValue(val.getValue().toString());
-        attributes.put(val.getKey(), new AttributeValueUpdate().withValue(v).withAction("PUT"));
+        AttributeValue v = AttributeValue.fromS(val.getValue().toString());
+        attributes.put(val.getKey(), AttributeValueUpdate.builder().action(AttributeAction.PUT).value(v).build());
       }
 
       if (null != this.ttlKeyName) {
-        AttributeValue v = new AttributeValue().withN(
+        AttributeValue v = AttributeValue.fromN(
             String.valueOf((System.currentTimeMillis() / 1000L) + this.ttlDuration));
-        attributes.put(this.ttlKeyName, new AttributeValueUpdate().withValue(v).withAction("PUT"));
+        attributes.put(this.ttlKeyName, AttributeValueUpdate.builder().action(AttributeAction.PUT).value(v).build());
       }
-      req.setAttributeUpdates(attributes);
+      updateItemBuilder.attributeUpdates(attributes);
     } else {
       Map<String, String> attrNames = new HashMap<>();
       Map<String, AttributeValue> attrValues = new HashMap<>();
       StringBuilder updateExpression = new StringBuilder();
       String separator = "SET ";
       for (Entry<String, ByteIterator> val : values.entrySet()) {
-        AttributeValue v = new AttributeValue(val.getValue().toString());
+        AttributeValue v = AttributeValue.fromS(val.getValue().toString());
         String nameAlias = addAlias("#", val.getKey(), attrNames);
         String valueAlias = addAlias(":", v, attrValues);
         updateExpression.append(separator).append(nameAlias).append("=").append(valueAlias);
         separator = ",";
       }
       if (null != this.ttlKeyName) {
-        AttributeValue v = new AttributeValue().withN(
+        AttributeValue v = AttributeValue.fromN(
             String.valueOf((System.currentTimeMillis() / 1000L) + this.ttlDuration));
         String nameAlias = addAlias("#", this.ttlKeyName, attrNames);
         String valueAlias = addAlias(":", v, attrValues);
         updateExpression.append(separator).append(nameAlias).append("=").append(valueAlias);
       }
-      req.setExpressionAttributeNames(attrNames);
-      req.setExpressionAttributeValues(attrValues);
-      req.setUpdateExpression(updateExpression.toString());
+      updateItemBuilder.expressionAttributeNames(attrNames);
+      updateItemBuilder.expressionAttributeValues(attrValues);
+      updateItemBuilder.updateExpression(updateExpression.toString());
     }
 
     try {
-      dynamoDB.updateItem(req);
-    } catch (AmazonServiceException ex) {
+      dynamoDbClient.updateItem(updateItemBuilder.build());
+    } catch (AwsServiceException ex) {
       LOGGER.error(ex);
       return Status.ERROR;
-    } catch (AmazonClientException ex) {
+    } catch (SdkClientException ex) {
       LOGGER.error(ex);
       return CLIENT_ERROR;
     }
@@ -459,26 +453,26 @@ public class DynamoDBClient extends DB {
 
     Map<String, AttributeValue> attributes = createAttributes(values);
     // adding primary key
-    attributes.put(primaryKeyName, new AttributeValue(key));
+    attributes.put(primaryKeyName, AttributeValue.fromS(key));
     if (primaryKeyType == PrimaryKeyType.HASH_AND_RANGE) {
       // If the primary key type is HASH_AND_RANGE, then what has been put
       // into the attributes map above is the range key part of the primary
       // key, we still need to put in the hash key part here.
-      attributes.put(hashKeyName, new AttributeValue(hashKeyValue));
+      attributes.put(hashKeyName, AttributeValue.fromS(hashKeyValue));
     }
 
     if (null != this.ttlKeyName) {
-      attributes.put(this.ttlKeyName, new AttributeValue().withN(
+      attributes.put(this.ttlKeyName, AttributeValue.fromN(
           String.valueOf((System.currentTimeMillis() / 1000L) + this.ttlDuration)));
     }
-
-    PutItemRequest putItemRequest = new PutItemRequest(table, attributes);
+    
+    PutItemRequest putItemRequest = PutItemRequest.builder().item(attributes).tableName(table).build();
     try {
-      dynamoDB.putItem(putItemRequest);
-    } catch (AmazonServiceException ex) {
+      dynamoDbClient.putItem(putItemRequest);
+    } catch (AwsServiceException ex) {
       LOGGER.error(ex);
       return Status.ERROR;
-    } catch (AmazonClientException ex) {
+    } catch (SdkClientException ex) {
       LOGGER.error(ex);
       return CLIENT_ERROR;
     }
@@ -492,14 +486,14 @@ public class DynamoDBClient extends DB {
       LOGGER.debug("deletekey: " + key + " from table: " + table);
     }
 
-    DeleteItemRequest req = new DeleteItemRequest(table, createPrimaryKey(key));
+    DeleteItemRequest req = DeleteItemRequest.builder().key(createPrimaryKey(key)).tableName(table).build();
 
     try {
-      dynamoDB.deleteItem(req);
-    } catch (AmazonServiceException ex) {
+      dynamoDbClient.deleteItem(req);
+    } catch (AwsServiceException ex) {
       LOGGER.error(ex);
       return Status.ERROR;
-    } catch (AmazonClientException ex) {
+    } catch (SdkClientException ex) {
       LOGGER.error(ex);
       return CLIENT_ERROR;
     }
@@ -509,7 +503,7 @@ public class DynamoDBClient extends DB {
   private static Map<String, AttributeValue> createAttributes(Map<String, ByteIterator> values) {
     Map<String, AttributeValue> attributes = new HashMap<>(values.size() + 1);
     for (Entry<String, ByteIterator> val : values.entrySet()) {
-      attributes.put(val.getKey(), new AttributeValue(val.getValue().toString()));
+      attributes.put(val.getKey(), AttributeValue.fromS(val.getValue().toString()));
     }
     return attributes;
   }
@@ -524,7 +518,7 @@ public class DynamoDBClient extends DB {
       if (LOGGER.isDebugEnabled()) {
         LOGGER.debug(String.format("Result- key: %s, value: %s", attr.getKey(), attr.getValue()));
       }
-      rItems.put(attr.getKey(), new StringByteIterator(attr.getValue().getS()));
+      rItems.put(attr.getKey(), new StringByteIterator(attr.getValue().s()));
     }
     return rItems;
   }
@@ -532,10 +526,10 @@ public class DynamoDBClient extends DB {
   private Map<String, AttributeValue> createPrimaryKey(String key) {
     Map<String, AttributeValue> k = new HashMap<>();
     if (primaryKeyType == PrimaryKeyType.HASH) {
-      k.put(primaryKeyName, new AttributeValue().withS(key));
+      k.put(primaryKeyName, AttributeValue.fromS(key));
     } else if (primaryKeyType == PrimaryKeyType.HASH_AND_RANGE) {
-      k.put(hashKeyName, new AttributeValue().withS(hashKeyValue));
-      k.put(primaryKeyName, new AttributeValue().withS(key));
+      k.put(hashKeyName, AttributeValue.fromS(hashKeyValue));
+      k.put(primaryKeyName, AttributeValue.fromS(key));
     } else {
       throw new RuntimeException("Assertion Error: impossible primary key type");
     }
