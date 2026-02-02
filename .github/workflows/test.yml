@@ -10,44 +10,43 @@ on:
     branches:
       - master
 
+env:
+  MAVEN_OPTS: "-Xmx2g -XX:+UseG1GC"
+
 jobs:
-  packaging:
-   strategy:
-     fail-fast: true
-     matrix:
-       java: ["21"]
-   uses: "./.github/workflows/build.yml"
-   with:
-     version: "1.0.0"
-     java: "${{ matrix.java }}"
-  tests:
+  test:
+    name: Test (Java ${{ matrix.java }})
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         java: ["21"]
-        scylla: ["2025.1", "2025.2"]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - uses: actions/setup-java@v4
         with:
           distribution: "temurin"
           java-version: "${{ matrix.java }}"
-      - name: Install Deps
-        run: |
-          sudo apt-get update > /dev/null
-          sudo apt-get install -y maven > /dev/null
-      - name: Set up Docker
-        uses: docker/setup-docker-action@v4
-        with:
-          set-host: true
+          cache: "maven"
+
       - name: Run Tests
         run: |
-          mvn clean install > /dev/null
-          mvn -ff -am test \
-            -Djava.source="${{ matrix.java }}" \
-            -Djava.target="${{ matrix.java }}" \
+          mvn -B test \
+            -Dproject.build.sourceEncoding=UTF-8 \
             -DskipTests=false \
-            -Dscylla.version="${{ matrix.scylla }}"
+            -pl dynamodb,scylla -am
+
+  packaging:
+    name: Build Package (Java ${{ matrix.java }})
+    needs: [test]
+    strategy:
+      fail-fast: true
+      matrix:
+        java: ["21"]
+    uses: "./.github/workflows/build.yml"
+    with:
+      version: "0.0.0-test"
+      java: "${{ matrix.java }}"

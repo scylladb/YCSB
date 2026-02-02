@@ -9,11 +9,13 @@ on:
       version:
         required: true
         description: "Version of the release"
+        type: string
       java:
         required: false
         description: "Java version"
         type: string
         default: "21"
+
   workflow_call:
     inputs:
       version:
@@ -25,32 +27,39 @@ on:
         description: "Java version"
         type: string
         default: "21"
+
 jobs:
   build:
     name: Build ${{ inputs.version }} for Java ${{ inputs.java }}
-    strategy:
-      matrix:
-        os: ["ubuntu-latest"]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-java@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           distribution: "temurin"
           java-version: ${{ inputs.java }}
+          cache: "maven"
 
-      - name: Install Deps
+      - name: Build Package
         run: |
-          sudo apt-get update > /dev/null
-          sudo apt-get install -y rpm apt-utils dpkg-dev devscripts debhelper dh-make build-essential maven > /dev/null
+          chmod +x ./scripts/package.sh
+          ./scripts/package.sh \
+            --version ${{ inputs.version }} \
+            --java ${{ inputs.java }} \
+            --ci \
+            --clean \
+            --output-dir .
 
-      - name: Artifacts
-        run: |
-          ./scripts/package.sh ${{ inputs.version }} ${{ inputs.java }} > /dev/null
-      - uses: actions/upload-artifact@v4
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
         with:
           name: ycsb-java${{ inputs.java }}
           path: |
             scylla-ycsb-${{ inputs.version }}-java${{ inputs.java }}.tar.gz
+            scylla-ycsb-${{ inputs.version }}-java${{ inputs.java }}.tar.gz.sha256
+          retention-days: 30

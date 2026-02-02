@@ -36,7 +36,7 @@ LICENSE file.
   <dependencies>
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
-      <artifactId>apache-client</artifactId>
+      <artifactId>netty-nio-client</artifactId>
       <version>2.27.21</version>
     </dependency>
     <dependency>
