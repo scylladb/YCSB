@@ -1,13 +1,29 @@
-ARG VERSION
 ARG INPUT_JAVA_VERSION=21
+
 FROM eclipse-temurin:${INPUT_JAVA_VERSION}-jdk-noble AS build
+ARG MAVEN_VERSION=3.9.12
+ARG VERSION=${VERSION}
 
 WORKDIR /app
 
 COPY . .
 
-RUN apt-get update && apt-get install -y maven \
-    && ./scripts/package.sh "${VERSION}" "${INPUT_JAVA_VERSION}"
+# Install Maven from Apache directly to ensure compatibility with Java 21 and release configuration
+RUN apt-get update && apt-get install -y curl \
+    && curl -fsSL https://archive.apache.org/dist/maven/maven-3/$MAVEN_VERSION/binaries/apache-maven-$MAVEN_VERSION-bin.tar.gz -o /tmp/maven.tar.gz \
+    && tar xzf /tmp/maven.tar.gz -C /opt \
+    && ln -s /opt/apache-maven-$MAVEN_VERSION /opt/maven \
+    && rm /tmp/maven.tar.gz \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV MAVEN_HOME="/opt/maven"
+ENV PATH="$MAVEN_HOME/bin:${PATH}"
+
+# Verify Java version before build
+RUN java -version && mvn -version
+
+RUN ./scripts/package.sh -v "$VERSION"
 
 FROM eclipse-temurin:${INPUT_JAVA_VERSION}-jre-noble AS production
 

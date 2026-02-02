@@ -34,11 +34,10 @@ import com.google.common.collect.Sets;
 import org.junit.*;
 import org.junit.rules.TestName;
 import site.ycsb.ByteIterator;
+import site.ycsb.DBException;
 import site.ycsb.Status;
 import site.ycsb.StringByteIterator;
 import site.ycsb.db.DynamoDBClient;
-import site.ycsb.measurements.Measurements;
-import site.ycsb.workloads.CoreWorkload;
 import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.scylladb.ScyllaDBContainer;
 
@@ -49,6 +48,8 @@ import java.util.Set;
 import java.util.Vector;
 import java.util.stream.Collectors;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 
 /**
@@ -62,29 +63,25 @@ public class DynamoDBClientTest {
 
   @BeforeClass
   public static void setUpContainer() {
-    try {
-      // Set dummy AWS credentials for testing
-      System.setProperty(SdkSystemSetting.AWS_ACCESS_KEY_ID.property(), "dummy");
-      System.setProperty(SdkSystemSetting.AWS_SECRET_ACCESS_KEY.property(), "dummy");
-      // Determine Scylla image from system properties, with sensible defaults
-      // -Dscylla.image takes precedence. Otherwise built from -Dscylla.version (defaults to 2025.1)
-      final String version = System.getProperty("scylla.version", "2025.1");
-      final String imageProp = System.getProperty("scylla.image");
-      final String image = (imageProp != null && !imageProp.isEmpty()) ? imageProp : ("scylladb/scylla:" + version);
+    Assume.assumeTrue("Docker is not available", isDockerAvailable());
+    // Set dummy AWS credentials for testing
+    System.setProperty(SdkSystemSetting.AWS_ACCESS_KEY_ID.property(), "dummy");
+    System.setProperty(SdkSystemSetting.AWS_SECRET_ACCESS_KEY.property(), "dummy");
+    // Determine Scylla image from system properties, with sensible defaults
+    // -Dscylla.image takes precedence. Otherwise built from -Dscylla.version (defaults to 2025.1)
+    final String version = System.getProperty("scylla.version", "2025.1");
+    final String imageProp = System.getProperty("scylla.image");
+    final String image = (imageProp != null && !imageProp.isEmpty()) ? imageProp : ("scylladb/scylla:" + version);
 
-      scyllaContainer = new ScyllaDBContainer(DockerImageName.parse(image))
-          // Enable Alternator (DynamoDB API) on port 8000
-          .withCommand("--alternator-port=8000", "--alternator-write-isolation=always");
-      scyllaContainer.addExposedPort(8000);
-      scyllaContainer.start();
+    scyllaContainer = new ScyllaDBContainer(DockerImageName.parse(image))
+        // Enable Alternator (DynamoDB API) on port 8000
+        .withCommand("--alternator-port=8000", "--alternator-write-isolation=always");
+    scyllaContainer.addExposedPort(8000);
+    scyllaContainer.start();
 
-      HOST = scyllaContainer.getHost();
-      // Use the mapped port for Alternator (8000)
-      PORT = scyllaContainer.getMappedPort(8000);
-
-    } catch (Throwable t) {
-      Assume.assumeTrue("Skipping DynamoDB tests because Docker/Testcontainers is not available: " + t.getMessage(), false);
-    }
+    HOST = scyllaContainer.getHost();
+    // Use the mapped port for Alternator (8000)
+    PORT = scyllaContainer.getMappedPort(8000);
   }
 
   @AfterClass
@@ -144,7 +141,10 @@ public class DynamoDBClientTest {
         boolean tableActive = TableStatus.ACTIVE.equals(result.tableStatus());
         boolean indexActive = result.globalSecondaryIndexes() == null
           || result.globalSecondaryIndexes().stream().allMatch(
-                      gsi -> TableStatus.ACTIVE.equals(gsi.indexStatus()));
+                      gsi -> {
+                        gsi.indexStatus();
+                        return false;
+                      });
         if (tableActive && indexActive) {
           return;
         }
@@ -472,5 +472,57 @@ public class DynamoDBClientTest {
       }
     }
     Assert.fail("Scan did not return expected number of rows");
+  }
+
+  @Test
+  public void testPackageLoadBalancer() throws DBException {
+    Properties props = new Properties();
+    props.setProperty("dynamodb.endpoint", "http://" + HOST + ":" + PORT);
+    props.setProperty("dynamodb.primaryKey", "y_id");
+    props.setProperty("dynamodb.alternator.loadbalancing", "true");
+    props.setProperty("dynamodb.alternator.usePackageLoadBalancer", "true");
+
+    DynamoDBClient client = new DynamoDBClient();
+    client.setProperties(props);
+    client.init();
+
+    try {
+      String key = "lb-test-key";
+      Map<String, ByteIterator> values = new HashMap<>();
+      values.put("f1", new StringByteIterator("v1"));
+      Status status = client.insert(TABLE(), key, values);
+      assertThat(status, is(Status.OK));
+
+      Map<String, ByteIterator> result = new HashMap<>();
+      status = client.read(TABLE(), key, null, result);
+      assertThat(status, is(Status.OK));
+      assertThat(result.get("f1").toString(), is("v1"));
+    } finally {
+      client.cleanup();
+    }
+  }
+
+  private static boolean isDockerAvailable() {
+    try {
+      configureDockerHost();
+      org.testcontainers.DockerClientFactory.instance().client();
+      return true;
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  private static void configureDockerHost() {
+    if (System.getenv("DOCKER_HOST") != null || System.getProperty("docker.host") != null) {
+      return;
+    }
+    var home = System.getProperty("user.home");
+    if (home == null || home.isEmpty()) {
+      return;
+    }
+    var desktopSocket = Path.of(home, ".docker", "run", "docker.sock");
+    if (Files.exists(desktopSocket)) {
+      System.setProperty("docker.host", "unix://" + desktopSocket);
+    }
   }
 }
