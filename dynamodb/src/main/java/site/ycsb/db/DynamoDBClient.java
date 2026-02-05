@@ -29,6 +29,12 @@ import software.amazon.awssdk.core.client.config.ClientAsyncConfiguration;
 import software.amazon.awssdk.core.client.config.SdkAdvancedAsyncClientOption;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
+import software.amazon.awssdk.http.TlsTrustManagersProvider;
+
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import java.security.cert.X509Certificate;
+
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.endpoints.Endpoint;
@@ -47,9 +53,13 @@ import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
 import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AwsCredentials;
 
 import java.net.URI;
+import java.io.IOException;
+import java.io.FileInputStream;
 import java.util.HashMap;
+import java.util.Properties;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -150,7 +160,7 @@ public final class DynamoDBClient extends DB {
     }
   }
 
-  private enum PrimaryKeyType { HASH, HASH_AND_RANGE }
+  private enum PrimaryKeyType {HASH, HASH_AND_RANGE}
 
   private record TableIndex(String table, Optional<String> index) {
     static TableIndex parse(String input) {
@@ -159,7 +169,8 @@ public final class DynamoDBClient extends DB {
     }
   }
 
-  private record InclusiveScanResult(Status status, int count) {}
+  private record InclusiveScanResult(Status status, int count) {
+  }
 
   @Override
   public void init() throws DBException {
@@ -196,8 +207,10 @@ public final class DynamoDBClient extends DB {
     builder.region(region);
 
     var endpoint = props.getProperty("dynamodb.endpoint");
+    LOGGER.info("Using DynamoDB endpoint: " + endpoint);
     var useLoadBalancing = Boolean.parseBoolean(
         props.getProperty("dynamodb.alternator.loadbalancing", "false"));
+    LOGGER.info("Alternator load balancing enabled: " + useLoadBalancing);
 
     if (useLoadBalancing && endpoint != null) {
       sharedEndpointProvider = createEndpointProvider(props, endpoint);
@@ -207,19 +220,30 @@ public final class DynamoDBClient extends DB {
       builder.endpointOverride(URI.create(endpoint));
     }
 
-    var accessKey = props.getProperty("dynamodb.accessKey");
-    var secretKey = props.getProperty("dynamodb.secretKey");
-    if (accessKey != null && secretKey != null) {
+    var accessKey = props.getProperty("dynamodb.awsAccessKey", "test");
+    var secretKey = props.getProperty("dynamodb.awsSecretKey", "test");
+    var credentialsFile = props.getProperty("dynamodb.awsCredentialsFile");
+
+    if (credentialsFile != null && !credentialsFile.isEmpty()) {
+      var credentials = loadCredentialsFromFile(credentialsFile);
+      builder.credentialsProvider(StaticCredentialsProvider.create(credentials));
+    } else if (accessKey != null && secretKey != null) {
       builder.credentialsProvider(StaticCredentialsProvider.create(
           AwsBasicCredentials.create(accessKey, secretKey)));
-    } else if (endpoint != null && endpoint.startsWith("http://") && !endpoint.contains("amazonaws.com")) {
-      builder.credentialsProvider(StaticCredentialsProvider.create(
-          AwsBasicCredentials.create("dummy", "dummy")));
     }
 
     var threadCount = Integer.parseInt(props.getProperty(Client.THREAD_COUNT_PROPERTY, "1"));
-    builder.httpClientBuilder(NettyNioAsyncHttpClient.builder()
-        .maxConcurrency(threadCount));
+    var httpClientBuilder = NettyNioAsyncHttpClient.builder()
+        .maxConcurrency(threadCount);
+
+    // Configure SSL/TLS trust all certificates if requested
+    var trustAllCerts = Boolean.parseBoolean(props.getProperty("dynamodb.alternator.trustAllCertificates", "false"));
+    if (trustAllCerts) {
+      LOGGER.warn("Trust all certificates is enabled. This should only be used for testing with self-signed certificates. Never enable in production!");
+      httpClientBuilder.tlsTrustManagersProvider(createTrustAllTrustManagersProvider());
+    }
+
+    builder.httpClientBuilder(httpClientBuilder);
 
     // Optional: attach custom execution interceptors (useful for observability/tests)
     var interceptors = props.getProperty("dynamodb.executionInterceptors");
@@ -273,6 +297,69 @@ public final class DynamoDBClient extends DB {
         props.getProperty("dynamodb.alternator.datacenter", ""),
         props.getProperty("dynamodb.alternator.rack", "")
     );
+  }
+
+  /**
+   * Loads AWS credentials from a file.
+   * The file should be in Java Properties format with:
+   * accessKey = your_access_key_id
+   * secretKey = your_secret_access_key
+   *
+   * @param filePath the path to the credentials file
+   * @return AWS credentials loaded from the file
+   * @throws RuntimeException if the file cannot be read or is malformed
+   */
+  private AwsCredentials loadCredentialsFromFile(String filePath) {
+    try {
+      var props = new Properties();
+      try (var input = new FileInputStream(filePath)) {
+        props.load(input);
+      }
+
+      var accessKey = props.getProperty("accessKey");
+      var secretKey = props.getProperty("secretKey");
+
+      if (accessKey == null || accessKey.trim().isEmpty()) {
+        throw new IllegalArgumentException("Credentials file must contain 'accessKey' property");
+      }
+
+      if (secretKey == null || secretKey.trim().isEmpty()) {
+        throw new IllegalArgumentException("Credentials file must contain 'secretKey' property");
+      }
+
+      LOGGER.info("Loaded AWS credentials from file: " + filePath);
+      return AwsBasicCredentials.create(accessKey.trim(), secretKey.trim());
+    } catch (IOException e) {
+      throw new RuntimeException("Failed to read AWS credentials from file: " + filePath, e);
+    }
+  }
+
+  /**
+   * Creates a TrustManagersProvider that trusts all certificates.
+   * This should only be used for testing with self-signed certificates.
+   * Never use this in production environments.
+   *
+   * @return TrustManagersProvider that accepts all certificates
+   */
+  private TlsTrustManagersProvider createTrustAllTrustManagersProvider() {
+    return () -> new TrustManager[]{
+        new X509TrustManager() {
+          @Override
+          public void checkClientTrusted(X509Certificate[] chain, String authType) {
+            // Accept all client certificates
+          }
+
+          @Override
+          public void checkServerTrusted(X509Certificate[] chain, String authType) {
+            // Accept all server certificates
+          }
+
+          @Override
+          public X509Certificate[] getAcceptedIssuers() {
+            return new X509Certificate[0];
+          }
+        }
+    };
   }
 
   private static final class StaticRoundRobinEndpointProvider implements DynamoDbEndpointProvider, AutoCloseable {
@@ -344,8 +431,8 @@ public final class DynamoDBClient extends DB {
   }
 
   private InclusiveScanResult handleInclusiveScan(TableIndex tableIndex, Map<String, AttributeValue> startKey,
-                                                   int recordcount, Set<String> fields,
-                                                   Vector<HashMap<String, ByteIterator>> result) {
+                                                  int recordcount, Set<String> fields,
+                                                  Vector<HashMap<String, ByteIterator>> result) {
     return tableIndex.index()
         .map(idx -> {
           var tempResult = new Vector<HashMap<String, ByteIterator>>();
