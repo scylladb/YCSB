@@ -18,6 +18,7 @@ package site.ycsb.db;
 
 import com.scylladb.alternator.AlternatorConfig;
 import com.scylladb.alternator.AlternatorDynamoDbAsyncClient;
+import com.scylladb.alternator.TlsConfig;
 import com.scylladb.alternator.routing.ClusterScope;
 import com.scylladb.alternator.routing.DatacenterScope;
 import com.scylladb.alternator.routing.RackScope;
@@ -125,7 +126,10 @@ public final class DynamoDBClient extends DB {
         ttlKeyName = null;
       }
 
-      return new DynamoDBConfig(primaryKey, primaryKeyType, hashKeyName, hashKeyValue, ttlKeyName, ttlDuration, Boolean.parseBoolean(props.getProperty("dynamodb.consistentReads", "false")), !"false".equalsIgnoreCase(props.getProperty("dynamodb.inclusiveScan")), Boolean.parseBoolean(props.getProperty("dynamodb.useLegacyAPI", "false")));
+      return new DynamoDBConfig(primaryKey, primaryKeyType, hashKeyName, hashKeyValue, ttlKeyName, ttlDuration,
+          Boolean.parseBoolean(props.getProperty("dynamodb.consistentReads", "false")),
+          !"false".equalsIgnoreCase(props.getProperty("dynamodb.inclusiveScan")),
+          Boolean.parseBoolean(props.getProperty("dynamodb.useLegacyAPI", "false")));
     }
 
     private static PrimaryKeyType parsePrimaryKeyType(String value) throws DBException {
@@ -177,23 +181,46 @@ public final class DynamoDBClient extends DB {
   }
 
   private void initializeSharedClient(java.util.Properties props) {
-    var builder = AlternatorDynamoDbAsyncClient.builder();
-
-    var region = Optional.ofNullable(props.getProperty("dynamodb.region")).map(Region::of).orElse(Region.US_EAST_1);
-    builder.region(region);
-
     var endpoint = props.getProperty("dynamodb.endpoint");
     LOGGER.info("Using DynamoDB endpoint: " + endpoint);
-    var useLoadBalancing = Boolean.parseBoolean(props.getProperty("dynamodb.alternator.loadbalancing", "true"));
+    var useLoadBalancing = Boolean.parseBoolean(props.getProperty("dynamodb.alternator.loadbalancing", "false"));
     LOGGER.info("Alternator load balancing enabled: " + useLoadBalancing);
 
-    if (useLoadBalancing && endpoint != null) {
-      builder.withAlternatorConfig(createEndpointProvider(props, endpoint));
-      LOGGER.info("Alternator load balancing enabled with seed: " + endpoint);
-    } else if (endpoint != null) {
-      builder.endpointOverride(URI.create(endpoint));
-    }
+    var region = Optional.ofNullable(props.getProperty("dynamodb.region")).map(Region::of).orElse(Region.US_EAST_1);
 
+    if (useLoadBalancing && endpoint != null) {
+      // Use AlternatorDynamoDbAsyncClient for load balancing
+      var alternatorBuilder = AlternatorDynamoDbAsyncClient.builder();
+      alternatorBuilder.region(region);
+      alternatorBuilder.withAlternatorConfig(createEndpointProvider(props, endpoint));
+      alternatorBuilder.endpointOverride(URI.create(endpoint));
+      LOGGER.info("Alternator load balancing enabled with seed: " + endpoint);
+
+      configureStandardCredentials(alternatorBuilder, props);
+      configureStandardVirtualThreads(alternatorBuilder, props);
+      configureStandardInterceptors(alternatorBuilder, props);
+
+      sharedClient = alternatorBuilder.build();
+    } else {
+      // Use standard DynamoDbAsyncClient without load balancing
+      var standardBuilder = DynamoDbAsyncClient.builder();
+      standardBuilder.region(region);
+
+      if (endpoint != null) {
+        standardBuilder.endpointOverride(URI.create(endpoint));
+      }
+
+      configureStandardCredentials(standardBuilder, props);
+      configureHttpClient(standardBuilder, props);
+      configureStandardVirtualThreads(standardBuilder, props);
+      configureStandardInterceptors(standardBuilder, props);
+
+      sharedClient = standardBuilder.build();
+    }
+  }
+
+
+  private void configureStandardCredentials(software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClientBuilder builder, java.util.Properties props) {
     var accessKey = props.getProperty("dynamodb.awsAccessKey", "test");
     var secretKey = props.getProperty("dynamodb.awsSecretKey", "test");
     var credentialsFile = props.getProperty("dynamodb.awsCredentialsFile");
@@ -204,20 +231,36 @@ public final class DynamoDBClient extends DB {
     } else if (accessKey != null && secretKey != null) {
       builder.credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey)));
     }
+  }
 
+  private void configureHttpClient(software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClientBuilder builder, java.util.Properties props) {
     var threadCount = Integer.parseInt(props.getProperty(Client.THREAD_COUNT_PROPERTY, "1"));
-    var httpClientBuilder = NettyNioAsyncHttpClient.builder().maxConcurrency(threadCount);
-
-    // Configure SSL/TLS trust all certificates if requested
     var trustAllCerts = Boolean.parseBoolean(props.getProperty("dynamodb.alternator.trustAllCertificates", "false"));
-    if (trustAllCerts) {
-      LOGGER.warn("Trust all certificates is enabled. This should only be used for testing with self-signed certificates. Never enable in production!");
-      httpClientBuilder.tlsTrustManagersProvider(createTrustAllTrustManagersProvider());
+
+    // Only configure custom HTTP client if we need to customize it
+    if (threadCount > 1 || trustAllCerts) {
+      var httpClientBuilder = NettyNioAsyncHttpClient.builder().maxConcurrency(threadCount);
+
+      if (trustAllCerts) {
+        LOGGER.warn("Trust all certificates is enabled. This should only be used for testing with self-signed certificates. Never enable in production!");
+        httpClientBuilder.tlsTrustManagersProvider(createTrustAllTrustManagersProvider());
+      }
+
+      builder.httpClientBuilder(httpClientBuilder);
     }
+  }
 
-    builder.httpClientBuilder(httpClientBuilder);
+  private void configureStandardVirtualThreads(software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClientBuilder builder, java.util.Properties props) {
+    var useVirtualThreads = Boolean.parseBoolean(props.getProperty("dynamodb.virtualThreads", "false"));
+    if (useVirtualThreads) {
+      sharedCompletionExecutor = Executors.newVirtualThreadPerTaskExecutor();
+      builder.asyncConfiguration(ClientAsyncConfiguration.builder()
+          .advancedOption(SdkAdvancedAsyncClientOption.FUTURE_COMPLETION_EXECUTOR, sharedCompletionExecutor)
+          .build());
+    }
+  }
 
-    // Optional: attach custom execution interceptors (useful for observability/tests)
+  private void configureStandardInterceptors(software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClientBuilder builder, java.util.Properties props) {
     var interceptors = props.getProperty("dynamodb.executionInterceptors");
     if (interceptors != null && !interceptors.isEmpty()) {
       var cfg = software.amazon.awssdk.core.client.config.ClientOverrideConfiguration.builder();
@@ -236,22 +279,27 @@ public final class DynamoDBClient extends DB {
       }
       builder.overrideConfiguration(cfg.build());
     }
-
-    var useVirtualThreads = Boolean.parseBoolean(props.getProperty("dynamodb.virtualThreads", "false"));
-    if (useVirtualThreads) {
-      sharedCompletionExecutor = Executors.newVirtualThreadPerTaskExecutor();
-      builder.asyncConfiguration(ClientAsyncConfiguration.builder().advancedOption(SdkAdvancedAsyncClientOption.FUTURE_COMPLETION_EXECUTOR, sharedCompletionExecutor).build());
-    }
-
-    sharedClient = builder.build();
   }
 
   private AlternatorConfig createEndpointProvider(java.util.Properties props, String endpoint) {
     String datacenter = props.getProperty("dynamodb.alternator.datacenter");
     String rack = props.getProperty("dynamodb.alternator.rack");
-    RoutingScope scope = RackScope.of(datacenter, rack, DatacenterScope.of(datacenter, ClusterScope.create()));
 
-    return AlternatorConfig.builder().withSeedNode(URI.create(endpoint)).withRoutingScope(scope).withOptimizeHeaders(true).build();
+    RoutingScope scope;
+    if (datacenter != null && rack != null) {
+      scope = RackScope.of(datacenter, rack, DatacenterScope.of(datacenter, ClusterScope.create()));
+    } else if (datacenter != null) {
+      scope = DatacenterScope.of(datacenter, ClusterScope.create());
+    } else {
+      scope = ClusterScope.create();
+    }
+
+    var builder = AlternatorConfig.builder().withSeedNode(URI.create(endpoint)).
+        withRoutingScope(scope).
+        withTlsConfig(TlsConfig.systemDefault()).
+        withPort(Integer.parseInt(props.getProperty("dynamodb.alternator.port", "-1")));
+
+    return builder.build();
   }
 
   /**
@@ -356,7 +404,9 @@ public final class DynamoDBClient extends DB {
     return performScan(tableIndex, startKey, recordcount, count, fields, result);
   }
 
-  private InclusiveScanResult handleInclusiveScan(TableIndex tableIndex, Map<String, AttributeValue> startKey, int recordcount, Set<String> fields, Vector<HashMap<String, ByteIterator>> result) {
+  private InclusiveScanResult handleInclusiveScan(TableIndex tableIndex, Map<String, AttributeValue> startKey,
+                                                  int recordcount, Set<String> fields,
+                                                  Vector<HashMap<String, ByteIterator>> result) {
     return tableIndex.index().map(idx -> {
       var tempResult = new Vector<HashMap<String, ByteIterator>>();
       var status = query(tableIndex.table(), idx, startKey, recordcount, fields, tempResult);
@@ -373,7 +423,8 @@ public final class DynamoDBClient extends DB {
     });
   }
 
-  private Status performScan(TableIndex tableIndex, Map<String, AttributeValue> startKey, int recordcount, int initialCount, Set<String> fields, Vector<HashMap<String, ByteIterator>> result) {
+  private Status performScan(TableIndex tableIndex, Map<String, AttributeValue> startKey, int recordcount,
+                             int initialCount, Set<String> fields, Vector<HashMap<String, ByteIterator>> result) {
     var scanBuilder = ScanRequest.builder().tableName(tableIndex.table());
     tableIndex.index().ifPresent(scanBuilder::indexName);
     configureProjection(scanBuilder, fields);
@@ -438,7 +489,10 @@ public final class DynamoDBClient extends DB {
     values.forEach((k, v) -> updates.put(k, AttributeValueUpdate.builder().action(AttributeAction.PUT).value(AttributeValue.fromS(v.toString())).build()));
 
     if (config.ttlKeyName() != null) {
-      updates.put(config.ttlKeyName(), AttributeValueUpdate.builder().action(AttributeAction.PUT).value(AttributeValue.fromN(String.valueOf(currentTtl()))).build());
+      updates.put(config.ttlKeyName(), AttributeValueUpdate.builder()
+          .action(AttributeAction.PUT)
+          .value(AttributeValue.fromN(String.valueOf(currentTtl())))
+          .build());
     }
     return updates;
   }
@@ -486,7 +540,10 @@ public final class DynamoDBClient extends DB {
   }
 
   private Map<String, AttributeValue> createInsertAttributes(String key, Map<String, ByteIterator> values) {
-    var attributes = values.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e -> AttributeValue.fromS(e.getValue().toString()), (a, b) -> a, HashMap::new));
+    var attributes = values.entrySet().stream().collect(
+        Collectors.toMap(Map.Entry::getKey,
+            e -> AttributeValue.fromS(e.getValue().toString()),
+            (a, b) -> a, HashMap::new));
 
     attributes.put(config.primaryKeyName(), AttributeValue.fromS(key));
 
@@ -570,7 +627,8 @@ public final class DynamoDBClient extends DB {
     }
   }
 
-  private Status query(String table, String indexName, Map<String, AttributeValue> key, int recordcount, Set<String> fields, Vector<HashMap<String, ByteIterator>> result) {
+  private Status query(String table, String indexName, Map<String, AttributeValue> key, int recordcount,
+                       Set<String> fields, Vector<HashMap<String, ByteIterator>> result) {
     var builder = QueryRequest.builder().tableName(table).limit(recordcount);
 
     if (indexName != null && !indexName.isEmpty()) {
@@ -596,7 +654,12 @@ public final class DynamoDBClient extends DB {
 
   private void configureLegacyQuery(QueryRequest.Builder builder, Map<String, AttributeValue> key, Set<String> fields) {
     builder.attributesToGet(fields);
-    var conditions = key.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e -> Condition.builder().comparisonOperator(ComparisonOperator.EQ).attributeValueList(e.getValue()).build()));
+    var conditions = key.entrySet().stream().collect(
+        Collectors.toMap(Map.Entry::getKey,
+            e -> Condition.builder()
+                .comparisonOperator(ComparisonOperator.EQ)
+                .attributeValueList(e.getValue())
+                .build()));
     builder.keyConditions(conditions);
   }
 
