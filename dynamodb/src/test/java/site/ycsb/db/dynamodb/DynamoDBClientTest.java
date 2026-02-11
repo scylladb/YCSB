@@ -34,11 +34,10 @@ import com.google.common.collect.Sets;
 import org.junit.*;
 import org.junit.rules.TestName;
 import site.ycsb.ByteIterator;
+import site.ycsb.DBException;
 import site.ycsb.Status;
 import site.ycsb.StringByteIterator;
 import site.ycsb.db.DynamoDBClient;
-import site.ycsb.measurements.Measurements;
-import site.ycsb.workloads.CoreWorkload;
 import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.scylladb.ScyllaDBContainer;
 
@@ -49,6 +48,8 @@ import java.util.Set;
 import java.util.Vector;
 import java.util.stream.Collectors;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 
 /**
@@ -57,34 +58,34 @@ import java.net.URI;
 public class DynamoDBClientTest {
   private static String HOST;
   private static int PORT;
+  private static int REST_PORT;
 
   public static ScyllaDBContainer scyllaContainer;
 
   @BeforeClass
   public static void setUpContainer() {
-    try {
-      // Set dummy AWS credentials for testing
-      System.setProperty(SdkSystemSetting.AWS_ACCESS_KEY_ID.property(), "dummy");
-      System.setProperty(SdkSystemSetting.AWS_SECRET_ACCESS_KEY.property(), "dummy");
-      // Determine Scylla image from system properties, with sensible defaults
-      // -Dscylla.image takes precedence. Otherwise built from -Dscylla.version (defaults to 2025.1)
-      final String version = System.getProperty("scylla.version", "2025.1");
-      final String imageProp = System.getProperty("scylla.image");
-      final String image = (imageProp != null && !imageProp.isEmpty()) ? imageProp : ("scylladb/scylla:" + version);
+    Assume.assumeTrue("Docker is not available", isDockerAvailable());
+    // Set dummy AWS credentials for testing
+    System.setProperty(SdkSystemSetting.AWS_ACCESS_KEY_ID.property(), "dummy");
+    System.setProperty(SdkSystemSetting.AWS_SECRET_ACCESS_KEY.property(), "dummy");
+    // Determine Scylla image from system properties, with sensible defaults
+    // -Dscylla.image takes precedence. Otherwise built from -Dscylla.version (defaults to 2025.1)
+    final String version = System.getProperty("scylla.version", "2025.1");
+    final String imageProp = System.getProperty("scylla.image");
+    final String image = (imageProp != null && !imageProp.isEmpty()) ? imageProp : ("scylladb/scylla:" + version);
 
-      scyllaContainer = new ScyllaDBContainer(DockerImageName.parse(image))
-          // Enable Alternator (DynamoDB API) on port 8000
-          .withCommand("--alternator-port=8000", "--alternator-write-isolation=always");
-      scyllaContainer.addExposedPort(8000);
-      scyllaContainer.start();
+    scyllaContainer = new ScyllaDBContainer(DockerImageName.parse(image))
+        // Enable Alternator (DynamoDB API) on port 8000
+        .withCommand("--alternator-port=8000", "--alternator-write-isolation=always");
+    scyllaContainer.addExposedPort(8000);
+    scyllaContainer.addExposedPort(10000); // REST API port for load balancer
+    scyllaContainer.start();
 
-      HOST = scyllaContainer.getHost();
-      // Use the mapped port for Alternator (8000)
-      PORT = scyllaContainer.getMappedPort(8000);
-
-    } catch (Throwable t) {
-      Assume.assumeTrue("Skipping DynamoDB tests because Docker/Testcontainers is not available: " + t.getMessage(), false);
-    }
+    HOST = scyllaContainer.getHost();
+    // Use the mapped port for Alternator (8000)
+    PORT = scyllaContainer.getMappedPort(8000);
+    // Use the mapped port for REST API (10000)
+    REST_PORT = scyllaContainer.getMappedPort(10000);
   }
 
   @AfterClass
@@ -144,7 +145,10 @@ public class DynamoDBClientTest {
         boolean tableActive = TableStatus.ACTIVE.equals(result.tableStatus());
         boolean indexActive = result.globalSecondaryIndexes() == null
           || result.globalSecondaryIndexes().stream().allMatch(
-                      gsi -> TableStatus.ACTIVE.equals(gsi.indexStatus()));
+                      gsi -> {
+                        gsi.indexStatus();
+                        return false;
+                      });
         if (tableActive && indexActive) {
           return;
         }
@@ -472,5 +476,110 @@ public class DynamoDBClientTest {
       }
     }
     Assert.fail("Scan did not return expected number of rows");
+  }
+
+  @Test
+  public void testPackageLoadBalancer() throws DBException {
+    Properties props = new Properties();
+    props.setProperty("dynamodb.endpoint", "http://" + HOST + ":" + PORT);
+    props.setProperty("dynamodb.primaryKey", "y_id");
+    props.setProperty("dynamodb.alternator.loadbalancing", "true");
+    props.setProperty("dynamodb.alternator.usePackageLoadBalancer", "true");
+    props.setProperty("dynamodb.alternator.restApiEndpoint", "http://" + HOST + ":" + REST_PORT);
+
+    DynamoDBClient client = new DynamoDBClient();
+    client.setProperties(props);
+    client.init();
+
+    try {
+      String key = "lb-test-key";
+      Map<String, ByteIterator> values = new HashMap<>();
+      values.put("f1", new StringByteIterator("v1"));
+      Status status = client.insert(TABLE(), key, values);
+      assertThat(status, is(Status.OK));
+
+      Map<String, ByteIterator> result = new HashMap<>();
+      status = client.read(TABLE(), key, null, result);
+      assertThat(status, is(Status.OK));
+      assertThat(result.get("f1").toString(), is("v1"));
+    } finally {
+      client.cleanup();
+    }
+  }
+
+  /**
+   * Test that the client can initialize and work without explicit credentials.
+   * This tests the scenario where no dynamodb.awsAccessKey, dynamodb.awsSecretKey,
+   * or dynamodb.awsCredentialsFile properties are set.
+   * The client should fall back to the AWS SDK's default credential provider chain,
+   * which includes system properties, environment variables, AWS profiles, etc.
+   */
+  @Test
+  public void testClientWithoutExplicitCredentials() throws Exception {
+    // System properties are already set in setUpContainer() for testing
+    // AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY system properties
+
+    Properties p = new Properties();
+    p.setProperty("dynamodb.endpoint", "http://" + HOST + ":" + PORT);
+    p.setProperty("dynamodb.primaryKey", "y_id");
+    p.setProperty("dynamodb.region", "us-east-1");
+    p.setProperty("table", TABLE());
+    // Note: We are NOT setting:
+    // - dynamodb.awsAccessKey
+    // - dynamodb.awsSecretKey
+    // - dynamodb.awsCredentialsFile
+
+    DynamoDBClient clientWithoutCreds = new DynamoDBClient();
+    try {
+      clientWithoutCreds.setProperties(p);
+      clientWithoutCreds.init();
+
+      // Verify the client can perform operations using default credentials
+      final String key = "test-key-no-creds";
+      final Map<String, String> input = new HashMap<>();
+      input.put(fieldName(0), "value0");
+      input.put(fieldName(1), "value1");
+
+      // Insert operation
+      final Status insertStatus = clientWithoutCreds.insert(TABLE(), key, StringByteIterator.getByteIteratorMap(input));
+      assertThat("Insert should succeed with default credentials", insertStatus, is(Status.OK));
+
+      // Read operation to verify insert worked
+      final HashMap<String, ByteIterator> result = new HashMap<>();
+      final Status readStatus = clientWithoutCreds.read(TABLE(), key, null, result);
+      assertThat("Read should succeed with default credentials", readStatus, is(Status.OK));
+      assertThat("Read should return the inserted data", result.entrySet(), hasSize(3)); // y_id, field0, field1
+
+      final Map<String, String> strResult = StringByteIterator.getStringMap(result);
+      assertThat(strResult, hasEntry("y_id", key));
+      assertThat(strResult, hasEntry(fieldName(0), "value0"));
+      assertThat(strResult, hasEntry(fieldName(1), "value1"));
+    } finally {
+      clientWithoutCreds.cleanup();
+    }
+  }
+
+  private static boolean isDockerAvailable() {
+    try {
+      configureDockerHost();
+      org.testcontainers.DockerClientFactory.instance().client();
+      return true;
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  private static void configureDockerHost() {
+    if (System.getenv("DOCKER_HOST") != null || System.getProperty("docker.host") != null) {
+      return;
+    }
+    var home = System.getProperty("user.home");
+    if (home == null || home.isEmpty()) {
+      return;
+    }
+    var desktopSocket = Path.of(home, ".docker", "run", "docker.sock");
+    if (Files.exists(desktopSocket)) {
+      System.setProperty("docker.host", "unix://" + desktopSocket);
+    }
   }
 }
