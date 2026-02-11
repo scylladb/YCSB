@@ -45,17 +45,19 @@ public class DynamoDBClientIntegrationTest {
   private static final String TABLE_NAME = "usertable";
   private static final String PRIMARY_KEY = "p";
   private static final int ALTERNATOR_PORT = 8000;
+  private static final int REST_API_PORT = 10000;
 
   private static GenericContainer<?> scylla;
   private static DynamoDBClient ycsbClient;
   private static DynamoDbClient adminClient;
   private static String endpoint;
+  private static String restApiEndpoint;
 
   @BeforeClass
   public static void startContainer() throws Exception {
     scylla = new GenericContainer<>(
         DockerImageName.parse("scylladb/scylla:2025.4"))
-        .withExposedPorts(ALTERNATOR_PORT)
+        .withExposedPorts(ALTERNATOR_PORT, REST_API_PORT)
         .withCommand("--alternator-port", String.valueOf(ALTERNATOR_PORT),
             "--alternator-write-isolation", "always")
         .waitingFor(Wait.forHttp("/localnodes")
@@ -66,6 +68,10 @@ public class DynamoDBClientIntegrationTest {
     endpoint = "http://%s:%d".formatted(
         scylla.getHost(),
         scylla.getMappedPort(ALTERNATOR_PORT));
+
+    restApiEndpoint = "http://%s:%d".formatted(
+        scylla.getHost(),
+        scylla.getMappedPort(REST_API_PORT));
 
     adminClient = DynamoDbClient.builder()
         .endpointOverride(URI.create(endpoint))
@@ -83,8 +89,8 @@ public class DynamoDBClientIntegrationTest {
     props.setProperty("dynamodb.endpoint", endpoint);
     props.setProperty("dynamodb.primaryKey", PRIMARY_KEY);
     props.setProperty("dynamodb.region", "us-east-1");
-    props.setProperty("dynamodb.accessKey", "test");
-    props.setProperty("dynamodb.secretKey", "test");
+    props.setProperty("dynamodb.awsAccessKey", "test");
+    props.setProperty("dynamodb.awsSecretKey", "test");
 
     ycsbClient = new DynamoDBClient();
     ycsbClient.setProperties(props);
@@ -240,8 +246,8 @@ public class DynamoDBClientIntegrationTest {
     props.setProperty("dynamodb.endpoint", endpoint);
     props.setProperty("dynamodb.primaryKey", PRIMARY_KEY);
     props.setProperty("dynamodb.region", "us-east-1");
-    props.setProperty("dynamodb.accessKey", "test");
-    props.setProperty("dynamodb.secretKey", "test");
+    props.setProperty("dynamodb.awsAccessKey", "test");
+    props.setProperty("dynamodb.awsSecretKey", "test");
     props.setProperty("dynamodb.alternator.loadbalancing", "true");
     props.setProperty("dynamodb.alternator.usePackageLoadBalancer", "false");
 
@@ -283,10 +289,11 @@ public class DynamoDBClientIntegrationTest {
     props.setProperty("dynamodb.endpoint", endpoint);
     props.setProperty("dynamodb.primaryKey", PRIMARY_KEY);
     props.setProperty("dynamodb.region", "us-east-1");
-    props.setProperty("dynamodb.accessKey", "test");
-    props.setProperty("dynamodb.secretKey", "test");
+    props.setProperty("dynamodb.awsAccessKey", "test");
+    props.setProperty("dynamodb.awsSecretKey", "test");
     props.setProperty("dynamodb.alternator.loadbalancing", "true");
     props.setProperty("dynamodb.alternator.usePackageLoadBalancer", "true");
+    props.setProperty("dynamodb.alternator.restApiEndpoint", restApiEndpoint);
 
     var client = new DynamoDBClient();
     client.setProperties(props);

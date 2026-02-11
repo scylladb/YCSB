@@ -221,16 +221,23 @@ public final class DynamoDBClient extends DB {
 
 
   private void configureStandardCredentials(software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClientBuilder builder, java.util.Properties props) {
-    var accessKey = props.getProperty("dynamodb.awsAccessKey", "test");
-    var secretKey = props.getProperty("dynamodb.awsSecretKey", "test");
+    var accessKey = props.getProperty("dynamodb.awsAccessKey", "");
+    var secretKey = props.getProperty("dynamodb.awsSecretKey", "");
     var credentialsFile = props.getProperty("dynamodb.awsCredentialsFile");
 
+    AwsCredentials credentials = null;
+
     if (credentialsFile != null && !credentialsFile.isEmpty()) {
-      var credentials = loadCredentialsFromFile(credentialsFile);
-      builder.credentialsProvider(StaticCredentialsProvider.create(credentials));
-    } else if (accessKey != null && secretKey != null) {
-      builder.credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey)));
+      credentials = loadCredentialsFromFile(credentialsFile);
+    } else if (!accessKey.trim().isEmpty() && !secretKey.trim().isEmpty()) {
+      credentials = AwsBasicCredentials.create(accessKey.trim(), secretKey.trim());
     }
+
+    if (credentials != null) {
+      builder.credentialsProvider(StaticCredentialsProvider.create(credentials));
+    }
+    // If credentials is null, the SDK will use its default credential provider chain
+    // which includes environment variables, system properties, AWS profiles, EC2 instance metadata, etc.
   }
 
   private void configureHttpClient(software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClientBuilder builder, java.util.Properties props) {
@@ -322,16 +329,12 @@ public final class DynamoDBClient extends DB {
       var accessKey = props.getProperty("accessKey");
       var secretKey = props.getProperty("secretKey");
 
-      if (accessKey == null || accessKey.trim().isEmpty()) {
-        throw new IllegalArgumentException("Credentials file must contain 'accessKey' property");
+      if (accessKey != null && accessKey.trim().isEmpty() && secretKey != null && secretKey.trim().isEmpty()) {
+        LOGGER.info("Loaded AWS credentials from file: " + filePath);
+        return AwsBasicCredentials.create(accessKey.trim(), secretKey.trim());
       }
 
-      if (secretKey == null || secretKey.trim().isEmpty()) {
-        throw new IllegalArgumentException("Credentials file must contain 'secretKey' property");
-      }
-
-      LOGGER.info("Loaded AWS credentials from file: " + filePath);
-      return AwsBasicCredentials.create(accessKey.trim(), secretKey.trim());
+      return null;
     } catch (IOException e) {
       throw new RuntimeException("Failed to read AWS credentials from file: " + filePath, e);
     }

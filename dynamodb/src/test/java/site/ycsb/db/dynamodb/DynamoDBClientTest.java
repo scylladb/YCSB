@@ -58,6 +58,7 @@ import java.nio.file.Path;
 public class DynamoDBClientTest {
   private static String HOST;
   private static int PORT;
+  private static int REST_PORT;
 
   public static ScyllaDBContainer scyllaContainer;
 
@@ -77,11 +78,14 @@ public class DynamoDBClientTest {
         // Enable Alternator (DynamoDB API) on port 8000
         .withCommand("--alternator-port=8000", "--alternator-write-isolation=always");
     scyllaContainer.addExposedPort(8000);
+    scyllaContainer.addExposedPort(10000); // REST API port for load balancer
     scyllaContainer.start();
 
     HOST = scyllaContainer.getHost();
     // Use the mapped port for Alternator (8000)
     PORT = scyllaContainer.getMappedPort(8000);
+    // Use the mapped port for REST API (10000)
+    REST_PORT = scyllaContainer.getMappedPort(10000);
   }
 
   @AfterClass
@@ -481,6 +485,7 @@ public class DynamoDBClientTest {
     props.setProperty("dynamodb.primaryKey", "y_id");
     props.setProperty("dynamodb.alternator.loadbalancing", "true");
     props.setProperty("dynamodb.alternator.usePackageLoadBalancer", "true");
+    props.setProperty("dynamodb.alternator.restApiEndpoint", "http://" + HOST + ":" + REST_PORT);
 
     DynamoDBClient client = new DynamoDBClient();
     client.setProperties(props);
@@ -499,6 +504,58 @@ public class DynamoDBClientTest {
       assertThat(result.get("f1").toString(), is("v1"));
     } finally {
       client.cleanup();
+    }
+  }
+
+  /**
+   * Test that the client can initialize and work without explicit credentials.
+   * This tests the scenario where no dynamodb.awsAccessKey, dynamodb.awsSecretKey,
+   * or dynamodb.awsCredentialsFile properties are set.
+   * The client should fall back to the AWS SDK's default credential provider chain,
+   * which includes system properties, environment variables, AWS profiles, etc.
+   */
+  @Test
+  public void testClientWithoutExplicitCredentials() throws Exception {
+    // System properties are already set in setUpContainer() for testing
+    // AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY system properties
+
+    Properties p = new Properties();
+    p.setProperty("dynamodb.endpoint", "http://" + HOST + ":" + PORT);
+    p.setProperty("dynamodb.primaryKey", "y_id");
+    p.setProperty("dynamodb.region", "us-east-1");
+    p.setProperty("table", TABLE());
+    // Note: We are NOT setting:
+    // - dynamodb.awsAccessKey
+    // - dynamodb.awsSecretKey
+    // - dynamodb.awsCredentialsFile
+
+    DynamoDBClient clientWithoutCreds = new DynamoDBClient();
+    try {
+      clientWithoutCreds.setProperties(p);
+      clientWithoutCreds.init();
+
+      // Verify the client can perform operations using default credentials
+      final String key = "test-key-no-creds";
+      final Map<String, String> input = new HashMap<>();
+      input.put(fieldName(0), "value0");
+      input.put(fieldName(1), "value1");
+
+      // Insert operation
+      final Status insertStatus = clientWithoutCreds.insert(TABLE(), key, StringByteIterator.getByteIteratorMap(input));
+      assertThat("Insert should succeed with default credentials", insertStatus, is(Status.OK));
+
+      // Read operation to verify insert worked
+      final HashMap<String, ByteIterator> result = new HashMap<>();
+      final Status readStatus = clientWithoutCreds.read(TABLE(), key, null, result);
+      assertThat("Read should succeed with default credentials", readStatus, is(Status.OK));
+      assertThat("Read should return the inserted data", result.entrySet(), hasSize(3)); // y_id, field0, field1
+
+      final Map<String, String> strResult = StringByteIterator.getStringMap(result);
+      assertThat(strResult, hasEntry("y_id", key));
+      assertThat(strResult, hasEntry(fieldName(0), "value0"));
+      assertThat(strResult, hasEntry(fieldName(1), "value1"));
+    } finally {
+      clientWithoutCreds.cleanup();
     }
   }
 

@@ -31,22 +31,22 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertTrue;
 
 public class AlternatorLoadBalancingFunctionalTest {
-
-  private static MockAlternatorServer serverA;
-  private static MockAlternatorServer serverB;
   private static MockDiscoveryServer discoveryServer;
 
   @BeforeClass
   public static void startServers() throws Exception {
-    // Since AlternatorConfig will use the same port for all nodes,
-    // we only need the discovery server that can handle all requests
     discoveryServer = new MockDiscoveryServer(9999);
     discoveryServer.start();
+
+    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+      if (discoveryServer != null) {
+        discoveryServer.stop();
+      }
+    }));
   }
 
   @AfterClass
   public static void stopServers() {
-    if (discoveryServer != null) discoveryServer.stop();
   }
 
   @Test
