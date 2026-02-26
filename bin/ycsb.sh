@@ -76,6 +76,35 @@ if [ -z "$JAVA_HOME" ]; then
   exit 1;
 fi
 
+# Handle --version before requiring a binding
+if [ "--version" = "$1" ]; then
+  # Add top-level conf to classpath
+  if [ -z "$CLASSPATH" ]; then
+    CLASSPATH="$YCSB_HOME/conf"
+  else
+    CLASSPATH="$CLASSPATH:$YCSB_HOME/conf"
+  fi
+
+  # Check if source checkout or release distribution
+  if [ -r "$YCSB_HOME/pom.xml" ]; then
+    # Source checkout – use core target jars
+    for f in "$YCSB_HOME"/core/target/*.jar; do
+      if [ -r "$f" ]; then CLASSPATH="$CLASSPATH:$f"; fi
+    done
+    for f in "$YCSB_HOME"/core/target/dependency/*.jar; do
+      if [ -r "$f" ]; then CLASSPATH="$CLASSPATH:$f"; fi
+    done
+  else
+    # Release distribution – use lib jars
+    for f in "$YCSB_HOME"/lib/*.jar; do
+      if [ -r "$f" ]; then CLASSPATH="$CLASSPATH:$f"; fi
+    done
+  fi
+
+  # shellcheck disable=SC2086
+  exec "$JAVA_HOME/bin/java" $JAVA_OPTS -classpath "$CLASSPATH" site.ycsb.Client --version
+fi
+
 # Determine YCSB command argument
 if [ "load" = "$1" ] ; then
   YCSB_COMMAND=-load
@@ -88,7 +117,7 @@ elif [ "shell" = "$1" ] ; then
   YCSB_CLASS=site.ycsb.CommandLine
 else
   echo "[ERROR] Found unknown command '$1'"
-  echo "[ERROR] Expected one of 'load', 'run', or 'shell'. Exiting."
+  echo "[ERROR] Expected one of 'load', 'run', 'shell', or '--version'. Exiting."
   exit 1;
 fi
 
@@ -290,4 +319,3 @@ echo "$JAVA_HOME/bin/java
   -classpath "$CLASSPATH" \
   $YCSB_CLASS $YCSB_COMMAND \
   -db $BINDING_CLASS $YCSB_ARGS
-
