@@ -35,7 +35,8 @@ public class TestBuildInfo {
     var info = BuildInfo.getInstance();
     assertFalse(info.version().isBlank());
     assertFalse(info.gitHash().isBlank());
-    assertFalse(info.gitTag().isBlank());
+    // gitTag may be empty when the commit has no tag — that is acceptable
+    assertNotNull(info.gitTag());
     assertFalse(info.buildDate().isBlank());
   }
 
@@ -57,4 +58,3 @@ public class TestBuildInfo {
     assertFalse(BuildInfo.UNKNOWN.isBlank());
   }
 }
-

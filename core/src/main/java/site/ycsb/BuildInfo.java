@@ -65,8 +65,8 @@ public final class BuildInfo {
       return new BuildInfo(
           props.getProperty("version", UNKNOWN),
           props.getProperty("git.hash", UNKNOWN),
-          props.getProperty("git.tag", UNKNOWN),
-          props.getProperty("build.date", UNKNOWN)
+          props.getProperty("git.tag", ""),
+              props.getProperty("build.date", UNKNOWN)
       );
     } catch (IOException e) {
       return new BuildInfo(UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN);
@@ -121,4 +121,3 @@ public final class BuildInfo {
         + ", built: " + buildDate + ")";
   }
 }
-
