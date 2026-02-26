@@ -27,10 +27,8 @@ import org.apache.htrace.core.Tracer;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
-import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -70,8 +68,8 @@ final class RemainingFormatter {
       }
     }
     /* Only bother to include seconds if we're < 1 minute */
-    if (time.length() == 0) {
-      time.append(secondsCopy).append(time.length() == 1 ? " second " : " seconds ");
+    if (time.isEmpty()) {
+      time.append(secondsCopy).append(secondsCopy == 1 ? " second " : " seconds ");
     }
     return time;
   }
@@ -129,8 +127,8 @@ public final class Client {
 
   /**
    * Indicates how many inserts to do if less than recordcount.
-   * Useful for partitioning the load among multiple servers if the client 
-   * is the bottleneck. Additionally workloads should support the 
+   * Useful for partitioning the load among multiple servers if the client
+   * is the bottleneck. Additionally workloads should support the
    * "insertstart" property which tells them which record to start at.
    */
   public static final String INSERT_COUNT_PROPERTY = "insertcount";
@@ -141,7 +139,7 @@ public final class Client {
   public static final String TARGET_PROPERTY = "target";
 
   /**
-   * The maximum amount of time (in seconds) for which the benchmark 
+   * The maximum amount of time (in seconds) for which the benchmark
    * will be run.
    */
   public static final String MAX_EXECUTION_TIME = "maxexecutiontime";
@@ -192,55 +190,38 @@ public final class Client {
   private static final String CLIENT_EXPORT_MEASUREMENTS_SPAN =
       "Client#export_measurements";
 
+  private static final double MS_TO_SEC = 1000.0;
+  private static final double PERCENT_FACTOR = 100.0;
+  private static final int WARNING_SLEEP_TIME = 2000;
+
   /**
    * Print usage message.
    */
   public static void usageMessage() {
     System.out.println("Usage: java site.ycsb.Client [options]");
     System.out.println("Options:");
-    System.out.println("  -threads n: execute using n threads "
-        + "(default: 1) - can also be specified as the ");
-    System.out.println("        \"threadcount\" property using -p");
-    System.out.println("  -target n: attempt to do n operations per second "
-        + "(default: unlimited) - can also");
-    System.out.println("       be specified as the \"target\" property "
-        + "using -p");
+    System.out.println("  -threads n: execute using n threads (default: 1) - can also be specified as the \"threadcount\" property using -p");
+    System.out.println("  -target n: attempt to do n operations per second (default: unlimited) - can also be specified as the \"target\" property using -p");
     System.out.println("  -load:  run the loading phase of the workload");
-    System.out.println("  -t:  run the transactions phase of the workload "
-        + "(default)");
-    System.out.println("  -db dbname: specify the name of the DB to use "
-        + "(default: site.ycsb.BasicDB) -");
-    System.out.println("        can also be specified as the \"db\" property "
-        + "using -p");
-    System.out.println("  -P propertyfile: load properties from the "
-        + "given file. Multiple files can");
-    System.out.println("           be specified, and will be "
-        + "processed in the order specified");
-    System.out.println("  -p name=value:  specify a property to be passed "
-        + "to the DB and workloads;");
-    System.out.println("          multiple properties can be specified, "
-        + "and override any");
-    System.out.println("          values in the propertyfile");
+    System.out.println("  -t:  run the transactions phase of the workload (default)");
+    System.out.println("  -db dbname: specify the name of the DB to use (default: site.ycsb.BasicDB) - can also be specified as the \"db\" property using -p");
+    System.out.println("  -P propertyfile: load properties from the given file. Multiple files can be specified, and will be processed in the order specified");
+    System.out.println("  -p name=value:  specify a property to be passed to the DB and workloads;"
+        + " multiple properties can be specified, and override any values in the propertyfile");
     System.out.println("  -s:  show status during run (default: no status)");
-    System.out.println("  -l label:  use label for status (e.g. to label "
-        + "one experiment out of a whole batch)");
-    System.out.println("");
+    System.out.println("  -l label:  use label for status (e.g. to label one experiment out of a whole batch)");
+    System.out.println();
     System.out.println("Required properties:");
-    System.out.println("  " + WORKLOAD_PROPERTY + ": the name of "
-        + "the workload class to use ");
-    System.out.println("        (e.g. site.ycsb.workloads.CoreWorkload)");
-    System.out.println("");
-    System.out.println("To run the transaction phase from multiple "
-        + "servers, start a separate client on each.");
-    System.out.println("To run the load phase from multiple servers, "
-        + "start a separate client on each; ");
-    System.out.println("        additionally,");
-    System.out.println("use the \"insertcount\" and \"insertstart\" "
-        + "properties to divide up the records to be inserted");
+    System.out.println("  " + WORKLOAD_PROPERTY + ": the name of the workload class to use (e.g. site.ycsb.workloads.CoreWorkload)");
+    System.out.println();
+    System.out.println("To run the transaction phase from multiple servers, start a separate client on each.");
+    System.out.println("To run the load phase from multiple servers, start a separate client on each; additionally, "
+        + "use the \"insertcount\" and \"insertstart\" properties to divide up the records to be inserted");
   }
 
   /**
    * Check required properties.
+   *
    * @param props the properties to check.
    * @return true if all required properties are present.
    */
@@ -258,15 +239,13 @@ public final class Client {
    * Exports the measurements to either sysout or a file using the exporter
    * loaded from conf.
    *
-   * @param props the properties to check.
+   * @param props   the properties to check.
    * @param opcount the number of operations performed.
    * @param runtime the total runtime.
    * @throws IOException Either failed to write to output stream or
    *                     failed to close it.
    */
-  private static void exportMeasurements(final Properties props,
-                                         final int opcount,
-                                         final long runtime)
+  private static void exportMeasurements(Properties props, int opcount, long runtime)
       throws IOException {
     MeasurementsExporter exporter = null;
     try {
@@ -333,6 +312,7 @@ public final class Client {
 
   /**
    * Main class for executing YCSB.
+   *
    * @param args the command line arguments.
    */
   @SuppressWarnings("unchecked")
@@ -379,10 +359,7 @@ public final class Client {
         workload, tracer, completeLatch);
 
     if (status) {
-      boolean standardstatus = false;
-      if (props.getProperty(Measurements.MEASUREMENT_TYPE_PROPERTY, "").compareTo("timeseries") == 0) {
-        standardstatus = true;
-      }
+      boolean standardstatus = props.getProperty(Measurements.MEASUREMENT_TYPE_PROPERTY, "").compareTo("timeseries") == 0;
       int statusIntervalSeconds = Integer.parseInt(props.getProperty("status.interval", "10"));
       boolean trackJVMStats = props.getProperty(Measurements.MEASUREMENT_TRACK_JVM_PROPERTY,
           Measurements.MEASUREMENT_TRACK_JVM_PROPERTY_DEFAULT).equals("true");
@@ -472,12 +449,12 @@ public final class Client {
     System.exit(0);
   }
 
-  private static List<ClientThread> initDb(final String dbname, final Properties props,
-                                           final int threadcount,
-                                           final double targetperthreadperms,
-                                           final Workload workload,
-                                           final Tracer tracer,
-                                           final CountDownLatch completeLatch) {
+  private static List<ClientThread> initDb(String dbname, Properties props,
+                                           int threadcount,
+                                           double targetperthreadperms,
+                                           Workload workload,
+                                           Tracer tracer,
+                                           CountDownLatch completeLatch) {
     int actualThreadCount = threadcount;
     boolean initFailed = false;
     boolean dotransactions = Boolean.valueOf(
@@ -536,14 +513,14 @@ public final class Client {
     return clients;
   }
 
-  private static Tracer getTracer(final Properties props, final Workload workload) {
+  private static Tracer getTracer(Properties props, Workload workload) {
     return new Tracer.Builder("YCSB " + workload.getClass().getSimpleName())
         .conf(getHTraceConfiguration(props))
         .build();
   }
 
-  private static void initWorkload(final Properties props, final Thread warningthread,
-                                   final Workload workload, final Tracer tracer) {
+  private static void initWorkload(Properties props, Thread warningthread,
+                                   Workload workload, Tracer tracer) {
     try {
       try (TraceScope span = tracer.newScope(CLIENT_WORKLOAD_INIT_SPAN)) {
         workload.init(props);
@@ -556,7 +533,7 @@ public final class Client {
     }
   }
 
-  private static HTraceConfiguration getHTraceConfiguration(final Properties props) {
+  private static HTraceConfiguration getHTraceConfiguration(Properties props) {
     final Map<String, String> filteredProperties = new HashMap<>();
     for (String key : props.stringPropertyNames()) {
       if (key.startsWith(HTRACE_KEY_PREFIX)) {
@@ -566,10 +543,6 @@ public final class Client {
     }
     return HTraceConfiguration.fromMap(filteredProperties);
   }
-
-  private static final int WARNING_SLEEP_TIME = 2000;
-  private static final double MS_TO_SEC = 1000.0;
-  private static final double PERCENT_FACTOR = 100.0;
 
   private static Thread setupWarningThread() {
     //show a warning message that creating the workload is taking a while
@@ -588,27 +561,14 @@ public final class Client {
     };
   }
 
-  private static Workload getWorkload(final Properties props) {
+  private static Workload getWorkload(Properties props) {
     ClassLoader classLoader = Client.class.getClassLoader();
 
-    try {
-      Properties projectProp = new Properties();
-      InputStream projectPropsStream =
-          classLoader.getResourceAsStream("project.properties");
-      if (projectPropsStream != null) {
-        projectProp.load(projectPropsStream);
-        System.err.println("YCSB Client " + projectProp.getProperty("version"));
-      } else {
-        System.err.println(BuildInfo.getInstance());
-      }
-    } catch (final IOException e) {
-      System.err.println("Unable to retrieve client version.");
-    }
-
+    System.err.println(BuildInfo.getInstance());
     System.err.println();
     System.err.println("Loading workload...");
     try {
-      Class workloadclass = classLoader.loadClass(props.getProperty(WORKLOAD_PROPERTY));
+      Class<?> workloadclass = classLoader.loadClass(props.getProperty(WORKLOAD_PROPERTY));
 
       return (Workload) workloadclass.newInstance();
     } catch (Exception e) {
@@ -620,7 +580,7 @@ public final class Client {
     return null;
   }
 
-  private static void loadPropertyFile(final String path, final Properties into) {
+  private static void loadPropertyFile(String path, Properties into) {
     Properties loaded = new Properties();
     try (FileInputStream fis = new FileInputStream(path)) {
       loaded.load(fis);
@@ -636,13 +596,15 @@ public final class Client {
         String key = value.substring(2, value.length() - 1);
         String replacement = System.getProperty(key);
         if (replacement != null) {
-          into.setProperty(prop, loaded.getProperty(replacement));
+          into.setProperty(prop, replacement);
         }
+      } else {
+        into.setProperty(prop, value);
       }
     });
   }
 
-  private static Properties parseArguments(final String[] args) {
+  private static Properties parseArguments(String[] args) {
     Properties props = new Properties();
     System.err.print("Command line:");
     for (String arg : args) {
@@ -764,12 +726,10 @@ public final class Client {
 
     //overwrite file properties with properties from the command line
 
-    //Issue #5 - remove call to stringPropertyNames to make compilable under Java 1.5
-    for (Enumeration e = props.propertyNames(); e.hasMoreElements();) {
-      String prop = (String) e.nextElement();
-
-      fileprops.setProperty(prop, props.getProperty(prop));
-    }
+    Properties finalProps = props;
+    props.stringPropertyNames().forEach(prop -> {
+      fileprops.setProperty(prop, finalProps.getProperty(prop));
+    });
 
     props = fileprops;
 
