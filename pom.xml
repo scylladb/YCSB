@@ -4,7 +4,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>site.ycsb</groupId>
   <artifactId>root</artifactId>
-  <version>0.18.0-SNAPSHOT</version>
+  <version>1.3.0-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>YCSB Root</name>
   <description>This is the top level project that builds, packages the core and all the DB bindings for YCSB infrastructure.</description>
