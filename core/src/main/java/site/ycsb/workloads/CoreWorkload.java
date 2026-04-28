@@ -347,6 +347,13 @@ public class CoreWorkload extends Workload {
   public static final String INSERTION_RETRY_INTERVAL_DEFAULT = "3";
 
   /**
+   * Maximum number of consecutive errors per thread before the workload is stopped.
+   * Set to 0 to disable (never stop on errors). Default is 100.
+   */
+  public static final String MAX_CONSECUTIVE_ERRORS_PROPERTY = "max_consecutive_errors";
+  public static final String MAX_CONSECUTIVE_ERRORS_DEFAULT = "10";
+
+  /**
    * Field name prefix.
    */
   public static final String FIELD_NAME_PREFIX = "fieldnameprefix";
@@ -368,6 +375,8 @@ public class CoreWorkload extends Workload {
   protected int zeropadding;
   protected int insertionRetryLimit;
   protected int insertionRetryInterval;
+  private int maxConsecutiveErrors;
+  private final ThreadLocal<Integer> consecutiveErrors = ThreadLocal.withInitial(() -> 0);
 
   private Measurements measurements = Measurements.getMeasurements();
 
@@ -545,6 +554,8 @@ public class CoreWorkload extends Workload {
         INSERTION_RETRY_LIMIT, INSERTION_RETRY_LIMIT_DEFAULT));
     insertionRetryInterval = Integer.parseInt(p.getProperty(
         INSERTION_RETRY_INTERVAL, INSERTION_RETRY_INTERVAL_DEFAULT));
+    maxConsecutiveErrors = Integer.parseInt(p.getProperty(
+        MAX_CONSECUTIVE_ERRORS_PROPERTY, MAX_CONSECUTIVE_ERRORS_DEFAULT));
   }
 
   /**
@@ -659,21 +670,37 @@ public class CoreWorkload extends Workload {
       return false;
     }
 
+    Status status;
     switch (operation) {
     case "READ":
-      doTransactionRead(db);
+      status = doTransactionRead(db);
       break;
     case "UPDATE":
-      doTransactionUpdate(db);
+      status = doTransactionUpdate(db);
       break;
     case "INSERT":
-      doTransactionInsert(db);
+      status = doTransactionInsert(db);
       break;
     case "SCAN":
-      doTransactionScan(db);
+      status = doTransactionScan(db);
       break;
     default:
-      doTransactionReadModifyWrite(db);
+      status = doTransactionReadModifyWrite(db);
+    }
+
+    if (maxConsecutiveErrors > 0) {
+      if (status == null || !status.isOk()) {
+        int errors = consecutiveErrors.get() + 1;
+        consecutiveErrors.set(errors);
+        if (errors >= maxConsecutiveErrors) {
+          System.err.println("Thread stopping workload after " + errors +
+              " consecutive errors. Last status: " + status);
+          requestStopBecauseOfError();
+          return false;
+        }
+      } else {
+        consecutiveErrors.set(0);
+      }
     }
 
     return true;
@@ -719,7 +746,7 @@ public class CoreWorkload extends Workload {
     return keynum;
   }
 
-  public void doTransactionRead(DB db) {
+  public Status doTransactionRead(DB db) {
     // choose a random key
     long keynum = nextKeynum();
 
@@ -739,14 +766,16 @@ public class CoreWorkload extends Workload {
     }
 
     HashMap<String, ByteIterator> cells = new HashMap<String, ByteIterator>();
-    db.read(table, keyname, fields, cells);
+    Status status = db.read(table, keyname, fields, cells);
 
     if (dataintegrity) {
       verifyRow(keyname, cells);
     }
+
+    return status;
   }
 
-  public void doTransactionReadModifyWrite(DB db) {
+  public Status doTransactionReadModifyWrite(DB db) {
     // choose a random key
     long keynum = nextKeynum();
 
@@ -779,10 +808,8 @@ public class CoreWorkload extends Workload {
 
     long ist = measurements.getIntendedStartTimeNs();
     long st = System.nanoTime();
-    db.read(table, keyname, fields, cells);
-
-    db.update(table, keyname, values);
-
+    Status readStatus = db.read(table, keyname, fields, cells);
+    Status updateStatus = db.update(table, keyname, values);
     long en = System.nanoTime();
 
     if (dataintegrity) {
@@ -791,9 +818,14 @@ public class CoreWorkload extends Workload {
 
     measurements.measure("READ-MODIFY-WRITE", (long) ((en - st) / 1000));
     measurements.measureIntended("READ-MODIFY-WRITE", (long) ((en - ist) / 1000));
+
+    if (readStatus != null && !readStatus.isOk()) {
+      return readStatus;
+    }
+    return updateStatus;
   }
 
-  public void doTransactionScan(DB db) {
+  public Status doTransactionScan(DB db) {
     // choose a random key
     long keynum = nextKeynum();
 
@@ -812,10 +844,10 @@ public class CoreWorkload extends Workload {
       fields.add(fieldname);
     }
 
-    db.scan(table, startkeyname, len, fields, new Vector<HashMap<String, ByteIterator>>());
+    return db.scan(table, startkeyname, len, fields, new Vector<HashMap<String, ByteIterator>>());
   }
 
-  public void doTransactionUpdate(DB db) {
+  public Status doTransactionUpdate(DB db) {
     // choose a random key
     long keynum = nextKeynum();
 
@@ -831,10 +863,10 @@ public class CoreWorkload extends Workload {
       values = buildSingleValue(keyname);
     }
 
-    db.update(table, keyname, values);
+    return db.update(table, keyname, values);
   }
 
-  public void doTransactionInsert(DB db) {
+  public Status doTransactionInsert(DB db) {
     // choose the next key
     long keynum = transactioninsertkeysequence.nextValue();
 
@@ -842,7 +874,7 @@ public class CoreWorkload extends Workload {
       String dbkey = CoreWorkload.buildKeyName(keynum, zeropadding, orderedinserts);
 
       HashMap<String, ByteIterator> values = buildValues(dbkey);
-      db.insert(table, dbkey, values);
+      return db.insert(table, dbkey, values);
     } finally {
       transactioninsertkeysequence.acknowledge(keynum);
     }
