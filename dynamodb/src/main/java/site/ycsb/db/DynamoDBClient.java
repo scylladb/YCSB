@@ -61,6 +61,7 @@ import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.AwsCredentials;
 
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.io.IOException;
 import java.io.FileInputStream;
 import java.util.*;
@@ -246,7 +247,9 @@ public final class DynamoDBClient extends DB {
 
     // Only configure custom HTTP client if we need to customize it
     if (threadCount > 1 || trustAllCerts) {
-      var httpClientBuilder = NettyNioAsyncHttpClient.builder().maxConcurrency(threadCount);
+      var httpClientBuilder = NettyNioAsyncHttpClient.builder()
+          .maxConcurrency(threadCount)
+          .useNonBlockingDnsResolver(false);
 
       if (trustAllCerts) {
         LOGGER.warn("Trust all certificates is enabled. This should only be used for testing with self-signed certificates. Never enable in production!");
@@ -741,7 +744,12 @@ public final class DynamoDBClient extends DB {
       return Status.ERROR;
     }
     if (cause instanceof SdkClientException sdkException) {
-      LOGGER.error(sdkException);
+      if (sdkException.getCause() instanceof UnknownHostException uhe) {
+        LOGGER.error("DNS resolution failed for '" + uhe.getMessage() +
+            "': check endpoint configuration and DNS availability");
+      } else {
+        LOGGER.error(sdkException);
+      }
       return CLIENT_ERROR;
     }
     LOGGER.error(cause);

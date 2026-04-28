@@ -184,6 +184,13 @@ timeseries.granularity=1000
 # the following number controls the interval between retries (in seconds):
 # core_workload_insertion_retry_interval = 3
 
+# Maximum consecutive errors before a thread stops the workload.
+#
+# During the run phase, if a thread encounters this many consecutive DB errors
+# (e.g. connection failures), it will stop the entire workload to prevent
+# infinite error logging that can fill up disk. Set to 0 to disable.
+max_consecutive_errors = 10
+
 # Distributed Tracing via Apache HTrace (http://htrace.incubator.apache.org/)
 #
 # Defaults to blank / no tracing
