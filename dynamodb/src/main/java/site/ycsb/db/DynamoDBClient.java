@@ -247,7 +247,9 @@ public final class DynamoDBClient extends DB {
 
     // Only configure custom HTTP client if we need to customize it
     if (threadCount > 1 || trustAllCerts) {
-      var httpClientBuilder = NettyNioAsyncHttpClient.builder().maxConcurrency(threadCount);
+      var httpClientBuilder = NettyNioAsyncHttpClient.builder()
+          .maxConcurrency(threadCount)
+          .useNonBlockingDnsResolver(false);
 
       if (trustAllCerts) {
         LOGGER.warn("Trust all certificates is enabled. This should only be used for testing with self-signed certificates. Never enable in production!");
