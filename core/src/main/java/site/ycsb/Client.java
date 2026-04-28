@@ -595,9 +595,7 @@ public final class Client {
       if (value.startsWith("${")) {
         String key = value.substring(2, value.length() - 1);
         String replacement = System.getProperty(key);
-        if (replacement != null) {
-          into.setProperty(prop, replacement);
-        }
+        into.setProperty(prop, replacement != null ? replacement : value);
       } else {
         into.setProperty(prop, value);
       }
