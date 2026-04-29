@@ -77,6 +77,18 @@ import java.util.stream.Collectors;
  * DynamoDB client for YCSB - Java 21 modernized.
  *
  * <p>Supports both AWS DynamoDB and ScyllaDB Alternator with client-side load balancing.
+ *
+ * <p>DNS round-robin load distribution requires two settings to work correctly with Netty:
+ * <ol>
+ *   <li>{@code dynamodb.connectionTtlSeconds} (default 10) — Netty discards connections older than
+ *       this, forcing a new TCP connection and a fresh DNS lookup on the next request. Without this,
+ *       Netty reuses its pooled connection to the same IP indefinitely, so DNS round-robin never
+ *       rotates.</li>
+ *   <li>{@code dynamodb.dnsCacheTtl} (default 0) — sets the JVM {@code networkaddress.cache.ttl}
+ *       security property. Without setting it to 0, {@code InetAddress} caches the first resolved IP
+ *       forever (in many security-policy environments) and returns the same IP on every re-resolve,
+ *       defeating the round-robin even when a fresh connection is opened.</li>
+ * </ol>
  */
 public final class DynamoDBClient extends DB {
 
@@ -182,6 +194,13 @@ public final class DynamoDBClient extends DB {
   }
 
   private void initializeSharedClient(java.util.Properties props) {
+    // Without this, InetAddress caches the first DNS response for the lifetime of the JVM.
+    // The discovery loop in RoundRobinEndpointProvider calls getAllByName() repeatedly to
+    // accumulate IPs from DNS rotation — those calls must hit the OS resolver each time,
+    // not a stale JVM cache entry. The OS resolver has its own cache backed by the actual
+    // DNS record TTL, so this doesn't mean hammering the DNS server on every query.
+    java.security.Security.setProperty("networkaddress.cache.ttl", "0");
+
     var endpoint = props.getProperty("dynamodb.endpoint");
     LOGGER.info("Using DynamoDB endpoint: " + endpoint);
     var useLoadBalancing = Boolean.parseBoolean(props.getProperty("dynamodb.alternator.loadbalancing", "false"));
@@ -208,7 +227,12 @@ public final class DynamoDBClient extends DB {
       standardBuilder.region(region);
 
       if (endpoint != null) {
-        standardBuilder.endpointOverride(URI.create(endpoint));
+        var refreshSecs = Long.parseLong(props.getProperty("dynamodb.dnsRefreshSeconds", "30"));
+        var stableRounds = Integer.parseInt(props.getProperty("dynamodb.dnsDiscoveryStableRounds", "3"));
+        var discoveryDelayMs = Long.parseLong(props.getProperty("dynamodb.dnsDiscoveryDelayMs", "500"));
+        var provider = new RoundRobinEndpointProvider(URI.create(endpoint), refreshSecs, stableRounds, discoveryDelayMs);
+        sharedEndpointProvider = provider;
+        standardBuilder.endpointProvider(provider);
       }
 
       configureStandardCredentials(standardBuilder, props);
@@ -245,7 +269,6 @@ public final class DynamoDBClient extends DB {
     var threadCount = Integer.parseInt(props.getProperty(Client.THREAD_COUNT_PROPERTY, "1"));
     var trustAllCerts = Boolean.parseBoolean(props.getProperty("dynamodb.alternator.trustAllCertificates", "false"));
 
-    // Only configure custom HTTP client if we need to customize it
     if (threadCount > 1 || trustAllCerts) {
       var httpClientBuilder = NettyNioAsyncHttpClient.builder()
           .maxConcurrency(threadCount)
