@@ -33,6 +33,7 @@ LICENSE file.
 
   <properties>
     <skipTests>true</skipTests>
+    <netty.version>4.1.132.Final</netty.version>
   </properties>
 
   <dependencies>
@@ -67,17 +68,17 @@ LICENSE file.
     <dependency>
       <groupId>io.netty</groupId>
       <artifactId>netty-handler</artifactId>
-      <version>4.1.112.Final</version>
+      <version>${netty.version}</version>
     </dependency>
     <dependency>
       <groupId>io.netty</groupId>
       <artifactId>netty-transport</artifactId>
-      <version>4.1.112.Final</version>
+      <version>${netty.version}</version>
     </dependency>
     <dependency>
       <groupId>io.netty</groupId>
       <artifactId>netty-codec</artifactId>
-      <version>4.1.112.Final</version>
+      <version>${netty.version}</version>
     </dependency>
     <dependency>
       <groupId>org.hamcrest</groupId>

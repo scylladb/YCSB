@@ -68,7 +68,7 @@
     <maven.compiler.target>21</maven.compiler.target>
     <s3.version>1.10.20</s3.version>
     <maven.dependency.version>2.10</maven.dependency.version>
-    <scylla.cql.version>3.10.2-scylla-1</scylla.cql.version>
+    <scylla.cql.version>3.11.5.14</scylla.cql.version>
     <maven.assembly.version>2.5.5</maven.assembly.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
