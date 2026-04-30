@@ -1,0 +1,144 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":dependencyDashboard",
+    ":timezone(Europe/Belgrade)",
+    "schedule:earlyMondays",
+    ":separateMajorReleases",
+    ":enableVulnerabilityAlertsWithLabel(security)"
+  ],
+  "labels": ["dependencies", "renovate"],
+  "branchPrefix": "renovate/",
+  "commitMessagePrefix": "chore(deps):",
+  "rebaseWhen": "behind-base-branch",
+  "prConcurrentLimit": 10,
+  "prHourlyLimit": 4,
+  "configMigration": true,
+  "lockFileMaintenance": {
+    "enabled": false
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"],
+    "schedule": ["at any time"]
+  },
+  "osvVulnerabilityAlerts": true,
+  "maven": {
+    "enabled": true
+  },
+  "dockerfile": {
+    "enabled": true
+  },
+  "github-actions": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "description": "Group ScyllaDB Java driver bumps so the binding gets reviewed atomically.",
+      "matchManagers": ["maven"],
+      "matchPackageNames": [
+        "com.scylladb:scylla-driver-core",
+        "com.scylladb:scylla-driver-extras",
+        "com.scylladb:scylla-driver-mapping",
+        "com.scylladb:java-driver-core",
+        "com.scylladb.alternator:load-balancing"
+      ],
+      "groupName": "ScyllaDB Java drivers",
+      "labels": ["dependencies", "scylla-driver"],
+      "reviewers": ["team:qa"],
+      "schedule": ["at any time"],
+      "prPriority": 5
+    },
+    {
+      "description": "Group AWS SDK v2 (used by the dynamodb binding) into a single PR.",
+      "matchManagers": ["maven"],
+      "matchPackageNames": ["software.amazon.awssdk:**"],
+      "groupName": "AWS SDK v2",
+      "labels": ["dependencies", "aws-sdk"],
+      "prPriority": 4
+    },
+    {
+      "description": "Group all Netty 4.x artifacts so the override stays consistent.",
+      "matchManagers": ["maven"],
+      "matchPackageNames": ["io.netty:**"],
+      "groupName": "Netty 4.x",
+      "matchUpdateTypes": ["minor", "patch"],
+      "labels": ["dependencies", "netty"]
+    },
+    {
+      "description": "Group Testcontainers artifacts (testcontainers + scylladb module move together).",
+      "matchManagers": ["maven"],
+      "matchPackageNames": ["org.testcontainers:**"],
+      "groupName": "Testcontainers",
+      "labels": ["dependencies", "testcontainers"]
+    },
+    {
+      "description": "Group Jackson artifacts.",
+      "matchManagers": ["maven"],
+      "matchPackageNames": ["com.fasterxml.jackson.core:**"],
+      "groupName": "Jackson"
+    },
+    {
+      "description": "Group SLF4J artifacts.",
+      "matchManagers": ["maven"],
+      "matchPackageNames": ["org.slf4j:**"],
+      "groupName": "SLF4J"
+    },
+    {
+      "description": "Group Maven build plugins to avoid plugin churn.",
+      "matchManagers": ["maven"],
+      "matchPackageNames": [
+        "org.apache.maven.plugins:**",
+        "org.codehaus.mojo:**",
+        "org.jacoco:jacoco-maven-plugin"
+      ],
+      "groupName": "Maven plugins",
+      "labels": ["dependencies", "maven-plugins"]
+    },
+    {
+      "description": "Group GitHub Actions bumps weekly.",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "labels": ["dependencies", "github-actions"]
+    },
+    {
+      "description": "Group Docker base image bumps.",
+      "matchManagers": ["dockerfile"],
+      "groupName": "Docker base images",
+      "labels": ["dependencies", "docker"]
+    },
+    {
+      "description": "Hold the Scylla java-driver 4.x line — the binding is on the 3.x API and a 4.x bump requires a code rewrite.",
+      "matchManagers": ["maven"],
+      "matchPackageNames": ["com.scylladb:java-driver-core"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "Major ScyllaDB driver bumps need explicit review.",
+      "matchManagers": ["maven"],
+      "matchPackageNames": ["com.scylladb:scylla-driver-core"],
+      "matchUpdateTypes": ["major"],
+      "labels": ["dependencies", "scylla-driver", "major-bump"],
+      "automerge": false,
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Major AWS SDK v2 bumps need explicit review.",
+      "matchManagers": ["maven"],
+      "matchPackageNames": ["software.amazon.awssdk:**"],
+      "matchUpdateTypes": ["major"],
+      "labels": ["dependencies", "aws-sdk", "major-bump"],
+      "automerge": false
+    },
+    {
+      "description": "Pin the JDK base image major version — Java 21 is the project target.",
+      "matchManagers": ["dockerfile"],
+      "matchPackageNames": ["eclipse-temurin"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    }
+  ]
+}
