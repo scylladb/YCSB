@@ -35,8 +35,14 @@ jobs:
           java-version: "${{ matrix.java }}"
           cache: "maven"
 
+      - name: Tune kernel limits for Scylla
+        run: |
+          sudo sysctl -w fs.aio-max-nr=30000000
+          sudo sysctl -w fs.file-max=30000000
+
       - name: Run Tests
         run: |
+          ulimit -n 65536
           mvn -B test \
             -Dproject.build.sourceEncoding=UTF-8 \
             -DskipTests=false \
