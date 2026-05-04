@@ -18,6 +18,7 @@ package site.ycsb.db;
 
 import com.scylladb.alternator.AlternatorConfig;
 import com.scylladb.alternator.AlternatorDynamoDbAsyncClient;
+import com.scylladb.alternator.HttpClientType;
 import com.scylladb.alternator.TlsConfig;
 import com.scylladb.alternator.routing.ClusterScope;
 import com.scylladb.alternator.routing.DatacenterScope;
@@ -238,6 +239,10 @@ public final class DynamoDBClient extends DB {
       alternatorBuilder.region(region);
       alternatorBuilder.withAlternatorConfig(createAlternatorConfig(props, endpoint));
       alternatorBuilder.endpointOverride(URI.create(endpoint));
+      // Force Netty so the AWS SDK and the Alternator load balancer share one async HTTP stack —
+      // the same implementation used on the standard path. Mutually exclusive with
+      // httpClient()/httpClientBuilder(); we don't set those here.
+      alternatorBuilder.withHttpClientType(HttpClientType.NETTY);
       LOGGER.info("Alternator LB seed: " + endpoint);
 
       configureCredentials(alternatorBuilder, props);
