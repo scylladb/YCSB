@@ -1,4 +1,4 @@
-ARG INPUT_JAVA_VERSION=21
+ARG INPUT_JAVA_VERSION=25
 
 FROM eclipse-temurin:${INPUT_JAVA_VERSION}-jdk-noble AS build
 ARG MAVEN_VERSION=3.9.12
@@ -8,7 +8,7 @@ WORKDIR /app
 
 COPY . .
 
-# Install Maven from Apache directly to ensure compatibility with Java 21 and release configuration
+# Install Maven from Apache directly to ensure compatibility with Java 25 and release configuration
 RUN apt-get update && apt-get install -y curl \
     && curl -fsSL https://archive.apache.org/dist/maven/maven-3/$MAVEN_VERSION/binaries/apache-maven-$MAVEN_VERSION-bin.tar.gz -o /tmp/maven.tar.gz \
     && tar xzf /tmp/maven.tar.gz -C /opt \

@@ -19,11 +19,11 @@ env:
 jobs:
   test:
     name: Test (Java ${{ matrix.java }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        java: ["21"]
+        java: ["25"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,7 +48,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        java: ["21"]
+        java: ["25"]
     uses: "./.github/workflows/build.yml"
     with:
       version: "0.0.0-test"

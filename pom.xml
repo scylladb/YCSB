@@ -64,8 +64,8 @@
   </distributionManagement>
   <properties>
     <maven.compiler.encoding>UTF-8</maven.compiler.encoding>
-    <maven.compiler.source>21</maven.compiler.source>
-    <maven.compiler.target>21</maven.compiler.target>
+    <maven.compiler.source>25</maven.compiler.source>
+    <maven.compiler.target>25</maven.compiler.target>
     <s3.version>1.10.20</s3.version>
     <maven.dependency.version>2.10</maven.dependency.version>
     <scylla.cql.version>3.11.5.14</scylla.cql.version>

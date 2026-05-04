@@ -134,7 +134,7 @@
       "automerge": false
     },
     {
-      "description": "Pin the JDK base image major version — Java 21 is the project target.",
+      "description": "Pin the JDK base image major version — Java 25 is the project target.",
       "matchManagers": ["dockerfile"],
       "matchPackageNames": ["eclipse-temurin"],
       "matchUpdateTypes": ["major"],
