@@ -99,6 +99,17 @@ import java.util.stream.Collectors;
  */
 public final class DynamoDBClient extends DB {
 
+  static {
+    // Disable the JVM's positive DNS cache so each new Netty connection re-resolves the
+    // hostname and picks up the next IP from the OS resolver's round-robin rotation. This
+    // must run before {@link sun.net.InetAddressCachePolicy} is statically initialized
+    // (which happens on the first DNS lookup), so we do it in this class's static block —
+    // i.e. as soon as anything references DynamoDBClient. Mirrored in initializeSharedClient
+    // for redundancy.
+    java.security.Security.setProperty("networkaddress.cache.ttl", "0");
+    java.security.Security.setProperty("networkaddress.cache.negative.ttl", "0");
+  }
+
   private static final Logger LOGGER = Logger.getLogger(DynamoDBClient.class);
   private static final Status CLIENT_ERROR = new Status("CLIENT_ERROR", "An error occurred on the client.");
   private static final String DEFAULT_HASH_KEY_VALUE = "YCSB_0";
