@@ -77,27 +77,25 @@ import java.util.stream.Collectors;
  * <p>Supports both AWS DynamoDB and ScyllaDB Alternator with client-side load balancing.
  *
  * <h3>Traffic distribution across Alternator nodes (standard path)</h3>
- * When {@code dynamodb.endpoint} is set and Alternator load balancing is disabled,
- * the client uses a {@link DnsRoundRobinPool} to distribute requests evenly:
- * <ol>
- *   <li>At startup the pool resolves the endpoint hostname to all its IP addresses via
- *       repeated DNS queries until the result is stable (see {@code dynamodb.dnsDiscovery*}
- *       properties). One {@code DynamoDbAsyncClient} with {@code endpointOverride} is
- *       created per discovered IP.</li>
- *   <li>Every operation calls {@link #nextClient()} which returns the next client in strict
- *       round-robin order — one request, one IP, next call gets the next IP. Netty maintains
- *       a separate, healthy connection pool per client so no TCP handshakes are paid on each
- *       rotation.</li>
- *   <li>A background thread re-queries DNS every {@code dynamodb.dnsRefreshSeconds} and
- *       creates a new client for any IP that appears for the first time.</li>
- * </ol>
+ * When {@code dynamodb.endpoint} is set and Alternator load balancing is disabled, this
+ * binding builds a single {@code DynamoDbAsyncClient} whose {@code endpointOverride} is the
+ * configured hostname (not an IP). Netty's connection pool is sized to {@code threadcount}
+ * so it opens that many parallel HTTP connections; each new connection performs its own
+ * DNS lookup, and with the JVM DNS cache TTL forced to {@code 0} the OS resolver returns a
+ * different round-robin IP for each new connection. YCSB threads then share that pool of
+ * connections, which spreads requests evenly across cluster nodes — the same model the
+ * binding used in versions 0.2.x / 1.1.x / 1.2.x, where this was reported as working.
  *
- * <h3>Why not endpointProvider</h3>
- * The AWS SDK's {@code endpointProvider} hook is part of the rules-based endpoint resolution
- * framework and may cache its result between requests. Even when called per-request, Netty's
- * channel pool can coalesce connections in ways that defeat per-request IP rotation.
- * Using one client per IP with {@code endpointOverride} is the only approach that gives
- * a provable, testable guarantee that each operation goes to the intended node.
+ * <p>This deliberately replaces the per-IP client pool that lived briefly in 1.3.x: forcing
+ * one client per resolved IP gave a perfectly even <em>coordinator</em> distribution but
+ * pinned every connection to a single IP and bypassed the SDK's own DNS handling, which
+ * showed up as observed imbalance on the server side.
+ *
+ * <h3>Alternator load-balancing path</h3>
+ * When {@code dynamodb.alternator.loadbalancing=true}, the binding hands off to
+ * {@link AlternatorDynamoDbAsyncClient}, which discovers nodes via {@code /localnodes} and
+ * routes per-request. Netty is forced via {@link HttpClientType#NETTY} so both code paths
+ * share one async HTTP stack.
  */
 public final class DynamoDBClient extends DB {
 
@@ -109,20 +107,14 @@ public final class DynamoDBClient extends DB {
   private static final java.util.concurrent.atomic.AtomicInteger CLIENT_REF_COUNT =
       new java.util.concurrent.atomic.AtomicInteger();
 
-  // Alternator load-balancing path — topology-aware async client managed by Alternator library.
-  private static volatile DynamoDbAsyncClient sharedAlternatorClient;
-
-  // Standard path — one DynamoDbAsyncClient per discovered IP, round-robin at call site.
-  private static volatile DnsRoundRobinPool<DynamoDbAsyncClient> sharedPool;
-
+  private static volatile DynamoDbAsyncClient sharedClient;
   private static volatile ExecutorService sharedCompletionExecutor;
 
   /**
-   * Per-instance reference to the alternator client (null when using the round-robin pool).
-   * Captured once in {@link #init()} so cleanup can null the static without affecting
-   * in-flight operations on this instance.
+   * Per-instance reference captured from {@link #sharedClient} during {@link #init()} so
+   * cleanup can null the static without affecting in-flight operations on this instance.
    */
-  private DynamoDbAsyncClient alternatorClient;
+  private DynamoDbAsyncClient client;
   private DynamoDBConfig config;
 
   // ---- Configuration record -------------------------------------------------
@@ -202,12 +194,10 @@ public final class DynamoDBClient extends DB {
 
     CLIENT_LOCK.lock();
     try {
-      if (sharedAlternatorClient == null && sharedPool == null) {
+      if (sharedClient == null) {
         initializeSharedClient(props);
       }
-      // Capture alternator client reference if that path was initialised.
-      // For the round-robin pool path, nextClient() reads sharedPool directly.
-      this.alternatorClient = sharedAlternatorClient;
+      this.client = sharedClient;
       CLIENT_REF_COUNT.incrementAndGet();
     } finally {
       CLIENT_LOCK.unlock();
@@ -219,9 +209,9 @@ public final class DynamoDBClient extends DB {
   }
 
   private void initializeSharedClient(java.util.Properties props) {
-    // Disable JVM DNS cache so repeated InetAddress.getAllByName() calls during discovery
-    // and refresh actually reach the OS resolver and can return different IPs.
-    // The OS resolver has its own TTL-based cache so this doesn't hammer the DNS server.
+    // Force the JVM DNS cache TTL to 0 so each new Netty connection re-resolves the hostname
+    // and picks up the next IP from the OS resolver's round-robin rotation. Without this the
+    // JVM happily caches the first resolution forever and every connection lands on one IP.
     java.security.Security.setProperty("networkaddress.cache.ttl", "0");
 
     var endpoint = props.getProperty("dynamodb.endpoint");
@@ -239,9 +229,8 @@ public final class DynamoDBClient extends DB {
       alternatorBuilder.region(region);
       alternatorBuilder.withAlternatorConfig(createAlternatorConfig(props, endpoint));
       alternatorBuilder.endpointOverride(URI.create(endpoint));
-      // Force Netty so the AWS SDK and the Alternator load balancer share one async HTTP stack —
-      // the same implementation used on the standard path. Mutually exclusive with
-      // httpClient()/httpClientBuilder(); we don't set those here.
+      // Force Netty so the AWS SDK and the Alternator load balancer share one async HTTP stack.
+      // Mutually exclusive with httpClient()/httpClientBuilder(); we don't set those here.
       alternatorBuilder.withHttpClientType(HttpClientType.NETTY);
       LOGGER.info("Alternator LB seed: " + endpoint);
 
@@ -249,46 +238,22 @@ public final class DynamoDBClient extends DB {
       configureVirtualThreads(alternatorBuilder, props);
       configureInterceptors(alternatorBuilder, props);
 
-      sharedAlternatorClient = alternatorBuilder.build();
-
-    } else if (endpoint != null) {
-      // Standard path: create one DynamoDbAsyncClient per discovered IP.
-      // Set up virtual threads executor before the factory so each pool client can share it.
-      configureVirtualThreadsExecutor(props);
-      final ExecutorService vtExecutor = sharedCompletionExecutor;
-
-      var refreshSecs = Long.parseLong(props.getProperty("dynamodb.dnsRefreshSeconds", "30"));
-      var stableRounds = Integer.parseInt(props.getProperty("dynamodb.dnsDiscoveryStableRounds", "3"));
-      var discoveryDelayMs = Long.parseLong(props.getProperty("dynamodb.dnsDiscoveryDelayMs", "500"));
-
-      DnsRoundRobinPool.ItemFactory<DynamoDbAsyncClient> clientFactory = endpointUri -> {
-        var b = DynamoDbAsyncClient.builder()
-            .region(region)
-            .endpointOverride(endpointUri);
-        configureCredentials(b, props);
-        configureHttpClient(b, props);
-        if (vtExecutor != null) {
-          b.asyncConfiguration(ClientAsyncConfiguration.builder()
-              .advancedOption(SdkAdvancedAsyncClientOption.FUTURE_COMPLETION_EXECUTOR, vtExecutor)
-              .build());
-        }
-        configureInterceptors(b, props);
-        return b.build();
-      };
-
-      sharedPool = new DnsRoundRobinPool<>(
-          URI.create(endpoint), clientFactory, DnsRoundRobinPool.systemResolver(),
-          refreshSecs, stableRounds, discoveryDelayMs);
-
-    } else {
-      // No endpoint set — plain AWS DynamoDB with default endpoint resolution.
-      var standardBuilder = DynamoDbAsyncClient.builder().region(region);
-      configureCredentials(standardBuilder, props);
-      configureHttpClient(standardBuilder, props);
-      configureVirtualThreads(standardBuilder, props);
-      configureInterceptors(standardBuilder, props);
-      sharedAlternatorClient = standardBuilder.build(); // reuse alternator field for "plain" client
+      sharedClient = alternatorBuilder.build();
+      return;
     }
+
+    // Standard path: one async client targeting the hostname. Netty opens up to threadcount
+    // connections in parallel, each resolving DNS on its own — that's where the spread comes
+    // from. Equivalent to the v0.2.0 / v1.1.0 / v1.2.0 setup that the user observed working.
+    var standardBuilder = DynamoDbAsyncClient.builder().region(region);
+    if (endpoint != null) {
+      standardBuilder.endpointOverride(URI.create(endpoint));
+    }
+    configureCredentials(standardBuilder, props);
+    configureHttpClient(standardBuilder, props);
+    configureVirtualThreads(standardBuilder, props);
+    configureInterceptors(standardBuilder, props);
+    sharedClient = standardBuilder.build();
   }
 
   @Override
@@ -303,13 +268,9 @@ public final class DynamoDBClient extends DB {
         sharedCompletionExecutor.shutdown();
         sharedCompletionExecutor = null;
       }
-      if (sharedAlternatorClient != null) {
-        sharedAlternatorClient.close();
-        sharedAlternatorClient = null;
-      }
-      if (sharedPool != null) {
-        sharedPool.close(); // closes all per-IP clients inside
-        sharedPool = null;
+      if (sharedClient != null) {
+        sharedClient.close();
+        sharedClient = null;
       }
     } finally {
       CLIENT_LOCK.unlock();
@@ -318,23 +279,8 @@ public final class DynamoDBClient extends DB {
 
   // ---- Client selection -----------------------------------------------------
 
-  /**
-   * Returns the next {@code DynamoDbAsyncClient} to use for a single operation.
-   *
-   * <p>For the round-robin pool path this rotates across all discovered IPs on every call.
-   * For the alternator and plain-AWS paths it always returns the same shared client.
-   *
-   * <p><b>Important for paginated operations (scan, query):</b> capture the result of a
-   * single {@code nextClient()} call and pass it to every page request. Calling
-   * {@code nextClient()} once per page would route different pages to different nodes,
-   * which may invalidate the pagination cursor.
-   */
   private DynamoDbAsyncClient nextClient() {
-    var pool = sharedPool;
-    if (pool != null) {
-      return pool.next();
-    }
-    return alternatorClient;
+    return client;
   }
 
   // ---- Configuration helpers ------------------------------------------------
@@ -377,12 +323,6 @@ public final class DynamoDBClient extends DB {
       }
 
       builder.httpClientBuilder(httpClientBuilder);
-    }
-  }
-
-  private void configureVirtualThreadsExecutor(java.util.Properties props) {
-    if (Boolean.parseBoolean(props.getProperty("dynamodb.virtualThreads", "false"))) {
-      sharedCompletionExecutor = Executors.newVirtualThreadPerTaskExecutor();
     }
   }
 
@@ -547,9 +487,7 @@ public final class DynamoDBClient extends DB {
 
     var count = initialCount;
     var currentStartKey = startKey;
-    // Capture once: all pages of this scan must go to the same node so the pagination
-    // cursor remains valid.
-    var client = nextClient();
+    var scanClient = nextClient();
 
     while (count < recordcount) {
       if (currentStartKey != null) {
@@ -558,7 +496,7 @@ public final class DynamoDBClient extends DB {
       scanBuilder.limit(recordcount - count);
 
       try {
-        var response = client.scan(scanBuilder.build()).join();
+        var response = scanClient.scan(scanBuilder.build()).join();
         count += response.count();
         response.items().stream().map(this::extractResult).forEach(result::add);
         if (!response.hasLastEvaluatedKey()) {
