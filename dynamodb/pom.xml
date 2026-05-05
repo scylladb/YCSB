@@ -58,7 +58,7 @@ LICENSE file.
     <dependency>
       <groupId>com.scylladb.alternator</groupId>
       <artifactId>load-balancing</artifactId>
-      <version>2.0.0</version>
+      <version>2.0.4</version>
     </dependency>
     <!-- Test dependencies -->
     <dependency>
@@ -102,6 +102,10 @@ LICENSE file.
           <environmentVariables>
             <COM_GITHUB_DOCKER_JAVA_API_VERSION></COM_GITHUB_DOCKER_JAVA_API_VERSION>
           </environmentVariables>
+          <!-- Disable JVM positive DNS cache so the round-robin resolver SPI is invoked
+               on every connection-open during DnsRoundRobinDistributionTest. The @{...}
+               syntax is Maven late-binding so the jacoco agent's argLine is preserved. -->
+          <argLine>@{argLine} -Dsun.net.inetaddr.ttl=0 -Dsun.net.inetaddr.negative.ttl=0</argLine>
         </configuration>
       </plugin>
       <plugin>
