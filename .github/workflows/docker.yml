@@ -8,7 +8,7 @@ on:
         description: "Version tag for the Docker image"
         type: string
       java_version:
-        default: "21"
+        default: "25"
         required: false
         description: "Java version to use for building"
         type: string
@@ -35,7 +35,7 @@ on:
         description: "Version tag for the Docker image"
         type: string
       java_version:
-        default: "21"
+        default: "25"
         required: false
         description: "Java version to use for building"
         type: string
@@ -65,7 +65,7 @@ on:
 jobs:
   build:
     name: Build and Push Docker Image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       DOCKER_BUILDKIT: 1
       BUILDX_GIT_INFO: 1

@@ -11,7 +11,7 @@ on:
 jobs:
   tag:
     name: Extract Version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version_tag.outputs.tag }}
     steps:
@@ -29,7 +29,7 @@ jobs:
   test:
     name: Run Tests
     needs: [tag]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: "temurin"
-          java-version: "21"
+          java-version: "25"
           cache: "maven"
 
       - name: Run Tests
@@ -53,7 +53,7 @@ jobs:
     needs: [tag, test]
     strategy:
       matrix:
-        java: ["21"]
+        java: ["25"]
     uses: "./.github/workflows/build.yml"
     with:
       version: "${{ needs.tag.outputs.version }}"
@@ -65,7 +65,7 @@ jobs:
     uses: "./.github/workflows/docker.yml"
     with:
       version: "${{ needs.tag.outputs.version }}"
-      java_version: "21"
+      java_version: "25"
     secrets:
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
       REGISTRY: ${{ secrets.REGISTRY }}
@@ -74,11 +74,11 @@ jobs:
   release:
     name: Create GitHub Release
     needs: [tag, docker, build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ycsb-java21
+          name: ycsb-java25
 
       - name: List Artifacts
         run: ls -la
@@ -95,8 +95,8 @@ jobs:
           prerelease: false
           fail_on_unmatched_files: true
           files: |
-            scylla-ycsb-${{ needs.tag.outputs.version }}-java21.tar.gz
-            scylla-ycsb-${{ needs.tag.outputs.version }}-java21.tar.gz.sha256
+            scylla-ycsb-${{ needs.tag.outputs.version }}-java25.tar.gz
+            scylla-ycsb-${{ needs.tag.outputs.version }}-java25.tar.gz.sha256
 
       - name: Generate Changelog
         uses: heinrichreimer/action-github-changelog-generator@v2.4
