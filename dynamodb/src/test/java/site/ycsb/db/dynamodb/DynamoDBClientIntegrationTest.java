@@ -56,7 +56,7 @@ public class DynamoDBClientIntegrationTest {
   @BeforeClass
   public static void startContainer() throws Exception {
     scylla = new GenericContainer<>(
-        DockerImageName.parse("scylladb/scylla:2025.4"))
+        DockerImageName.parse("scylladb/scylla:2026.1"))
         .withExposedPorts(ALTERNATOR_PORT, REST_API_PORT)
         .withCommand("--alternator-port", String.valueOf(ALTERNATOR_PORT),
             "--alternator-write-isolation", "always")

@@ -69,8 +69,8 @@ public class DynamoDBClientTest {
     System.setProperty(SdkSystemSetting.AWS_ACCESS_KEY_ID.property(), "dummy");
     System.setProperty(SdkSystemSetting.AWS_SECRET_ACCESS_KEY.property(), "dummy");
     // Determine Scylla image from system properties, with sensible defaults
-    // -Dscylla.image takes precedence. Otherwise built from -Dscylla.version (defaults to 2025.1)
-    final String version = System.getProperty("scylla.version", "2025.1");
+    // -Dscylla.image takes precedence. Otherwise built from -Dscylla.version (defaults to 2026.1)
+    final String version = System.getProperty("scylla.version", "2026.1");
     final String imageProp = System.getProperty("scylla.image");
     final String image = (imageProp != null && !imageProp.isEmpty()) ? imageProp : ("scylladb/scylla:" + version);
 

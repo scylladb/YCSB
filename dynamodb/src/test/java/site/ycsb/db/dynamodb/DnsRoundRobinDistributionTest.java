@@ -106,7 +106,7 @@ public class DnsRoundRobinDistributionTest {
         System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("linux"));
     Assume.assumeTrue("Docker is not available", isDockerAvailable());
 
-    final String version = System.getProperty("scylla.version", "2025.1");
+    final String version = System.getProperty("scylla.version", "2026.1");
     final String imageProp = System.getProperty("scylla.image");
     final String image = (imageProp != null && !imageProp.isEmpty())
         ? imageProp
