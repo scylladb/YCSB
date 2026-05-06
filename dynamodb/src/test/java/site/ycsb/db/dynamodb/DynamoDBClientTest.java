@@ -33,6 +33,8 @@ import com.google.common.collect.Sets;
 
 import org.junit.*;
 import org.junit.rules.TestName;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 import site.ycsb.ByteIterator;
 import site.ycsb.DBException;
 import site.ycsb.Status;
@@ -41,6 +43,8 @@ import site.ycsb.db.DynamoDBClient;
 import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.scylladb.ScyllaDBContainer;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -53,9 +57,30 @@ import java.nio.file.Path;
 
 
 /**
- * Integration tests for the DynamoDB client using Scylla's Alternator interface
+ * Integration tests for the DynamoDB client using Scylla's Alternator interface.
+ * Parameterized over {@code dynamodb.sdkVersion} so the same suite runs against the SDK v1
+ * and v2 backends.
  */
+@RunWith(Parameterized.class)
 public class DynamoDBClientTest {
+
+  // (label, sdkVersion, httpClientMode). httpClientMode is only consumed by the v2 path; the v1
+  // path is always sync (Apache HTTP) so the value is ignored there but kept for the row label.
+  @Parameterized.Parameters(name = "{0}")
+  public static Collection<Object[]> configs() {
+    return Arrays.asList(
+        new Object[]{"v2-async", "v2", "async"},
+        new Object[]{"v2-sync",  "v2", "sync"},
+        new Object[]{"v1",       "v1", "sync"}
+    );
+  }
+
+  @Parameterized.Parameter(0)
+  public String label;
+  @Parameterized.Parameter(1)
+  public String sdkVersion;
+  @Parameterized.Parameter(2)
+  public String httpClientMode;
   private static String HOST;
   private static int PORT;
   private static int REST_PORT;
@@ -105,7 +130,9 @@ public class DynamoDBClientTest {
   @Rule
   public TestName testName = new TestName();
   private String TABLE() {
-    return "usertable" + testName.getMethodName();
+    // testName.getMethodName() includes the parameter suffix like "[v2-async]" for
+    // @Parameterized runs; DynamoDB table names only allow [a-zA-Z0-9_.-], so strip the rest.
+    return ("usertable" + testName.getMethodName()).replaceAll("[^a-zA-Z0-9_.-]", "_");
   }
 
   private void createTable() throws InterruptedException {
@@ -187,6 +214,14 @@ public class DynamoDBClientTest {
     p.setProperty("dynamodb.endpoint", "http://" + HOST + ":" + PORT);
     p.setProperty("dynamodb.primaryKey", "y_id");
     p.setProperty("dynamodb.region", "us-east-1");
+    p.setProperty("dynamodb.sdkVersion", sdkVersion);
+    p.setProperty("dynamodb.httpClientMode", httpClientMode);
+    // Pass credentials explicitly. Relying on AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY system
+    // properties only works for the v2 SDK; v1's SystemPropertiesCredentialsProvider reads
+    // aws.secretKey (not aws.secretAccessKey), so the env-driven fallback would silently fail
+    // for the v1 parameter row.
+    p.setProperty("dynamodb.awsAccessKey", "dummy");
+    p.setProperty("dynamodb.awsSecretKey", "dummy");
     p.setProperty("table", TABLE());
 
     ycsbClient = new DynamoDBClient();
@@ -486,6 +521,10 @@ public class DynamoDBClientTest {
     props.setProperty("dynamodb.alternator.loadbalancing", "true");
     props.setProperty("dynamodb.alternator.usePackageLoadBalancer", "true");
     props.setProperty("dynamodb.alternator.restApiEndpoint", "http://" + HOST + ":" + REST_PORT);
+    props.setProperty("dynamodb.sdkVersion", sdkVersion);
+    props.setProperty("dynamodb.httpClientMode", httpClientMode);
+    props.setProperty("dynamodb.awsAccessKey", "dummy");
+    props.setProperty("dynamodb.awsSecretKey", "dummy");
 
     DynamoDBClient client = new DynamoDBClient();
     client.setProperties(props);
@@ -516,13 +555,15 @@ public class DynamoDBClientTest {
    */
   @Test
   public void testClientWithoutExplicitCredentials() throws Exception {
-    // System properties are already set in setUpContainer() for testing
-    // AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY system properties
+    // System properties AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY are set in setUpContainer().
+    // V1 sees them too thanks to the v2-name bridge inside DynamoDBV1Operations#loadCredentials.
 
     Properties p = new Properties();
     p.setProperty("dynamodb.endpoint", "http://" + HOST + ":" + PORT);
     p.setProperty("dynamodb.primaryKey", "y_id");
     p.setProperty("dynamodb.region", "us-east-1");
+    p.setProperty("dynamodb.sdkVersion", sdkVersion);
+    p.setProperty("dynamodb.httpClientMode", httpClientMode);
     p.setProperty("table", TABLE());
     // Note: We are NOT setting:
     // - dynamodb.awsAccessKey

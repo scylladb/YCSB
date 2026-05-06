@@ -39,10 +39,25 @@ LICENSE file.
       <artifactId>netty-nio-client</artifactId>
       <version>2.27.21</version>
     </dependency>
+    <!-- Sync (Apache HTTP) HTTP client for v2 — selected via dynamodb.httpClientMode=sync.
+         Mirrors the v1 sync transport so we can compare apples-to-apples per HTTP layer. -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>apache-client</artifactId>
+      <version>2.27.21</version>
+    </dependency>
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>dynamodb</artifactId>
       <version>2.27.21</version>
+    </dependency>
+    <!-- AWS SDK v1 — opt-in via dynamodb.sdkVersion=v1 for back-to-back perf comparisons
+         against the v2 (async Netty) path. Only the dynamodb sub-artifact is pulled in,
+         not the full bundle. -->
+    <dependency>
+      <groupId>com.amazonaws</groupId>
+      <artifactId>aws-java-sdk-dynamodb</artifactId>
+      <version>1.12.787</version>
     </dependency>
     <dependency>
       <groupId>log4j</groupId>

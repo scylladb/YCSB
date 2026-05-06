@@ -16,9 +16,13 @@
 package site.ycsb.db.dynamodb;
 
 import org.jetbrains.annotations.NotNull;
+import org.junit.After;
 import org.junit.AfterClass;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.utility.DockerImageName;
@@ -40,7 +44,24 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertTrue;
 
+@RunWith(Parameterized.class)
 public class DynamoDBClientIntegrationTest {
+
+  @Parameterized.Parameters(name = "{0}")
+  public static Collection<Object[]> configs() {
+    return Arrays.asList(
+        new Object[]{"v2-async", "v2", "async"},
+        new Object[]{"v2-sync",  "v2", "sync"},
+        new Object[]{"v1",       "v1", "sync"}
+    );
+  }
+
+  @Parameterized.Parameter(0)
+  public String label;
+  @Parameterized.Parameter(1)
+  public String sdkVersion;
+  @Parameterized.Parameter(2)
+  public String httpClientMode;
 
   private static final String TABLE_NAME = "usertable";
   private static final String PRIMARY_KEY = "p";
@@ -48,10 +69,12 @@ public class DynamoDBClientIntegrationTest {
   private static final int REST_API_PORT = 10000;
 
   private static GenericContainer<?> scylla;
-  private static DynamoDBClient ycsbClient;
   private static DynamoDbClient adminClient;
   private static String endpoint;
   private static String restApiEndpoint;
+
+  // Per-test instance — recreated for every parameter so each SDK gets a fresh client.
+  private DynamoDBClient ycsbClient;
 
   @BeforeClass
   public static void startContainer() throws Exception {
@@ -84,28 +107,38 @@ public class DynamoDBClientIntegrationTest {
 
     // Wait for table to be fully ready
     Thread.sleep(1000);
+  }
 
+  @Before
+  public void setUpYcsbClient() throws Exception {
     var props = new Properties();
     props.setProperty("dynamodb.endpoint", endpoint);
     props.setProperty("dynamodb.primaryKey", PRIMARY_KEY);
     props.setProperty("dynamodb.region", "us-east-1");
     props.setProperty("dynamodb.awsAccessKey", "test");
     props.setProperty("dynamodb.awsSecretKey", "test");
+    props.setProperty("dynamodb.sdkVersion", sdkVersion);
+    props.setProperty("dynamodb.httpClientMode", httpClientMode);
 
     ycsbClient = new DynamoDBClient();
     ycsbClient.setProperties(props);
     ycsbClient.init();
   }
 
-  @AfterClass
-  public static void stopContainer() {
+  @After
+  public void tearDownYcsbClient() {
     if (ycsbClient != null) {
       try {
         ycsbClient.cleanup();
       } catch (Exception e) {
         // Ignore
       }
+      ycsbClient = null;
     }
+  }
+
+  @AfterClass
+  public static void stopContainer() {
     if (adminClient != null) {
       try {
         adminClient.close();
@@ -241,7 +274,7 @@ public class DynamoDBClientIntegrationTest {
     }
   }
 
-  private static @NotNull DynamoDBClient getDynamoDBClient() {
+  private @NotNull DynamoDBClient getDynamoDBClient() {
     var props = new Properties();
     props.setProperty("dynamodb.endpoint", endpoint);
     props.setProperty("dynamodb.primaryKey", PRIMARY_KEY);
@@ -250,6 +283,8 @@ public class DynamoDBClientIntegrationTest {
     props.setProperty("dynamodb.awsSecretKey", "test");
     props.setProperty("dynamodb.alternator.loadbalancing", "true");
     props.setProperty("dynamodb.alternator.usePackageLoadBalancer", "false");
+    props.setProperty("dynamodb.sdkVersion", sdkVersion);
+    props.setProperty("dynamodb.httpClientMode", httpClientMode);
 
     var client = new DynamoDBClient();
     client.setProperties(props);
@@ -284,7 +319,7 @@ public class DynamoDBClientIntegrationTest {
     }
   }
 
-  private static @NotNull DynamoDBClient getDbClient() {
+  private @NotNull DynamoDBClient getDbClient() {
     var props = new Properties();
     props.setProperty("dynamodb.endpoint", endpoint);
     props.setProperty("dynamodb.primaryKey", PRIMARY_KEY);
@@ -294,6 +329,8 @@ public class DynamoDBClientIntegrationTest {
     props.setProperty("dynamodb.alternator.loadbalancing", "true");
     props.setProperty("dynamodb.alternator.usePackageLoadBalancer", "true");
     props.setProperty("dynamodb.alternator.restApiEndpoint", restApiEndpoint);
+    props.setProperty("dynamodb.sdkVersion", sdkVersion);
+    props.setProperty("dynamodb.httpClientMode", httpClientMode);
 
     var client = new DynamoDBClient();
     client.setProperties(props);
