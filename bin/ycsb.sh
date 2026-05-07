@@ -280,6 +280,7 @@ YCSB_ARGS=$(echo "$@" | cut -d' ' -f3-)
 # About to run YCSB
 echo "$JAVA_HOME/bin/java
   -Djdk.attach.allowAttachSelf=true
+  -Djava.net.preferIPv4Stack=true
   --add-exports java.base/jdk.internal.misc=ALL-UNNAMED
   --add-opens java.base/jdk.internal.module=ALL-UNNAMED
   --add-opens=java.base/java.lang=ALL-UNNAMED
@@ -302,6 +303,7 @@ echo "$JAVA_HOME/bin/java
 # shellcheck disable=SC2086
 "$JAVA_HOME/bin/java" \
   -Djdk.attach.allowAttachSelf=true \
+  -Djava.net.preferIPv4Stack=true \
   --add-exports java.base/jdk.internal.misc=ALL-UNNAMED \
   --add-opens java.base/jdk.internal.module=ALL-UNNAMED \
   --add-opens=java.base/java.lang=ALL-UNNAMED \
