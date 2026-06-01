@@ -111,7 +111,8 @@ public class OneMeasurementHdrHistogram extends OneMeasurement {
    * Using {@link Recorder} to support concurrent updates to histogram.
    */
   public void measure(long latencyInMicros) {
-    histogram.recordValue(latencyInMicros);
+    // sct consumes hdr histograms expecting those to be in nanoseconds, so we adjust here.
+    histogram.recordValue(latencyInMicros * 1000);
   }
 
   /**
@@ -130,13 +131,14 @@ public class OneMeasurementHdrHistogram extends OneMeasurement {
       log.close();
     }
     exporter.write(getName(), "Operations", totalHistogram.getTotalCount());
-    exporter.write(getName(), "AverageLatency(us)", totalHistogram.getMean());
-    exporter.write(getName(), "MinLatency(us)", totalHistogram.getMinValue());
-    exporter.write(getName(), "MaxLatency(us)", totalHistogram.getMaxValue());
+    // We need to divide by 1000 to convert back to micros for reporting, since we multiplied by 1000 when recording to convert from micros to nanos.
+    exporter.write(getName(), "AverageLatency(us)", totalHistogram.getMean() / 1000);
+    exporter.write(getName(), "MinLatency(us)", totalHistogram.getMinValue() / 1000);
+    exporter.write(getName(), "MaxLatency(us)", totalHistogram.getMaxValue() / 1000);
 
     for (Double percentile : percentiles) {
       exporter.write(getName(), ordinal(percentile) + "PercentileLatency(us)",
-          totalHistogram.getValueAtPercentile(percentile));
+          totalHistogram.getValueAtPercentile(percentile) / 1000);
     }
 
     exportStatusCounts(exporter);
