@@ -19,6 +19,7 @@ package site.ycsb.db;
 import com.scylladb.alternator.AlternatorConfig;
 import com.scylladb.alternator.AlternatorDynamoDbAsyncClient;
 import com.scylladb.alternator.HttpClientType;
+import com.scylladb.alternator.NodeHealthConfig;
 import com.scylladb.alternator.TlsConfig;
 import com.scylladb.alternator.routing.ClusterScope;
 import com.scylladb.alternator.routing.DatacenterScope;
@@ -389,6 +390,25 @@ public final class DynamoDBClient extends DB {
         .withRoutingScope(scope)
         .withTlsConfig(TlsConfig.systemDefault())
         .withPort(Integer.parseInt(props.getProperty("dynamodb.alternator.port", "-1")))
+        .withNodeHealthConfig(createNodeHealthConfig(props))
+        .build();
+  }
+
+  private static NodeHealthConfig createNodeHealthConfig(java.util.Properties props) {
+    if (!Boolean.parseBoolean(props.getProperty("dynamodb.alternator.health.enabled", "true"))) {
+      return NodeHealthConfig.disabled();
+    }
+    // A benchmark must load every node soon after start, so the binding probes quarantined
+    // nodes once per second instead of the library's thirty seconds.
+    return NodeHealthConfig.builder()
+        .withDownNodeProbePeriodMs(Long.parseLong(
+            props.getProperty("dynamodb.alternator.health.probePeriodMs", "1000")))
+        .withQuarantineSuccessThreshold(Integer.parseInt(
+            props.getProperty("dynamodb.alternator.health.quarantineSuccessThreshold",
+                String.valueOf(NodeHealthConfig.DEFAULT_QUARANTINE_SUCCESS_THRESHOLD))))
+        .withConsecutiveFailureThreshold(Integer.parseInt(
+            props.getProperty("dynamodb.alternator.health.failureThreshold",
+                String.valueOf(NodeHealthConfig.DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD))))
         .build();
   }
 
