@@ -20,7 +20,7 @@ LICENSE file.
 Binding for [Scylla](https://www.scylladb.com/), using the CQL API
 via the [Scylla driver](https://github.com/scylladb/java-driver/).
 
-Requires JDK8.
+Uses the Scylla Java driver 4.x.
 
 ## Creating a table for use with YCSB
 
@@ -193,8 +193,10 @@ Database client protocol is asynchronous and allows queueing requests in
 a single connection. The default queue limit for local keys is 1024 and 256
 for remote ones. Current binding implementation do not require this.
 
-Both `scylla.coreconnections` and `scylla.maxconnections` define limits per node.
-When you see `-p scylla.coreconnections=14 -p scylla.maxconnections=14` that means
+The driver keeps a fixed number of connections per node. Both
+`scylla.coreconnections` and `scylla.maxconnections` set this number. When
+you set both, the driver uses the larger value. When you see
+`-p scylla.coreconnections=14 -p scylla.maxconnections=14`, the driver opens
 14 connections per node.
 
 Pick the number of connections per host to be divisible by the number of _shards_.
@@ -270,15 +272,21 @@ of 3 nodes of i3.4xlarge (16 vCPU per node) and target of 120000 is:
 * `scylla.maxconnections`
 * `scylla.coreconnections`
 
-  * Defaults for max and core connections can be found here:
-    https://github.com/scylladb/java-driver/tree/latest/manual/pooling.
+  * Set the driver option `advanced.connection.pool.local.size`. The larger value of the two is used.
+  * The driver default is 1 connection per node. See
+    https://java-driver.docs.scylladb.com/stable/manual/core/pooling/.
 
 * `scylla.connecttimeoutmillis`
+  * Sets the driver option `advanced.connection.connect-timeout`.
+
 * `scylla.readtimeoutmillis`
+  * Sets the driver option `basic.request.timeout`. This is the time limit for a full request, retries included.
+
 * `scylla.useSSL`
 
   * Default value is false.
-  - To connect with SSL set this value to true.
+  - To connect with SSL set this value to true. The binding uses the default JDK `SSLContext`.
+    This property applies only together with `scylla.username`.
 
 * `scylla.tracing`
   * Default is false

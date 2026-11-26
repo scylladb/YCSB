@@ -38,51 +38,18 @@ LICENSE file.
   <dependencies>
     <dependency>
       <groupId>com.scylladb</groupId>
-      <artifactId>scylla-driver-core</artifactId>
+      <artifactId>java-driver-core</artifactId>
       <version>${scylla.cql.version}</version>
-      <exclusions>
-        <exclusion>
-          <groupId>io.netty</groupId>
-          <artifactId>netty-handler</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>io.netty</groupId>
-          <artifactId>netty-buffer</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>io.netty</groupId>
-          <artifactId>netty-common</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>io.netty</groupId>
-          <artifactId>netty-transport</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>io.netty</groupId>
-          <artifactId>netty-codec</artifactId>
-        </exclusion>
-      </exclusions>
-    </dependency>
-    <!-- Add newer Netty versions to replace the excluded old ones -->
-    <dependency>
-      <groupId>io.netty</groupId>
-      <artifactId>netty-handler</artifactId>
-      <version>4.1.112.Final</version>
     </dependency>
     <dependency>
-      <groupId>io.netty</groupId>
-      <artifactId>netty-transport</artifactId>
-      <version>4.1.112.Final</version>
-    </dependency>
-    <dependency>
-      <groupId>io.netty</groupId>
-      <artifactId>netty-codec</artifactId>
-      <version>4.1.112.Final</version>
+      <groupId>com.scylladb</groupId>
+      <artifactId>java-driver-query-builder</artifactId>
+      <version>${scylla.cql.version}</version>
     </dependency>
     <dependency>
       <groupId>org.hamcrest</groupId>
-      <artifactId>hamcrest-library</artifactId>
-      <version>1.3</version>
+      <artifactId>hamcrest</artifactId>
+      <version>3.0</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -94,12 +61,12 @@ LICENSE file.
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
-      <version>1.7.25</version>
+      <version>2.0.20</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-simple</artifactId>
-      <version>1.7.25</version>
+      <version>2.0.20</version>
       <scope>runtime</scope>
     </dependency>
     <dependency>
@@ -111,37 +78,37 @@ LICENSE file.
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers</artifactId>
-      <version>1.21.3</version>
+      <version>2.0.5</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
-      <artifactId>scylladb</artifactId>
-      <version>1.21.3</version>
+      <artifactId>testcontainers-scylladb</artifactId>
+      <version>2.0.5</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>com.github.docker-java</groupId>
       <artifactId>docker-java-core</artifactId>
-      <version>3.4.2</version>
+      <version>3.7.1</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-annotations</artifactId>
-      <version>2.15.2</version>
+      <version>2.23</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
-      <version>2.15.2</version>
+      <version>2.23.0</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-core</artifactId>
-      <version>2.15.2</version>
+      <version>2.23.0</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -184,7 +151,7 @@ LICENSE file.
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
-        <version>3.2.5</version>
+        <version>3.6.1</version>
         <configuration>
           <useModulePath>false</useModulePath>
           <argLine>-Djava.library.path=${project.build.directory}/scylla-dependency/hyperic-sigar-1.6.4/sigar-bin/lib</argLine>

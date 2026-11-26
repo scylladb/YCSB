@@ -23,14 +23,11 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
-import com.datastax.driver.core.*;
-import com.datastax.driver.core.policies.RoundRobinPolicy;
-import com.datastax.driver.core.policies.TokenAwarePolicy;
-import com.google.common.collect.Sets;
-
-import com.datastax.driver.core.querybuilder.Insert;
-import com.datastax.driver.core.querybuilder.QueryBuilder;
-import com.datastax.driver.core.querybuilder.Select;
+import com.datastax.oss.driver.api.core.CqlSession;
+import com.datastax.oss.driver.api.core.cql.ResultSet;
+import com.datastax.oss.driver.api.core.cql.Row;
+import com.datastax.oss.driver.api.core.cql.SimpleStatement;
+import com.datastax.oss.driver.api.querybuilder.QueryBuilder;
 
 import org.junit.*;
 import site.ycsb.ByteIterator;
@@ -43,11 +40,14 @@ import org.testcontainers.scylladb.ScyllaDBContainer;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.Vector;
 
 /**
  * Integration tests for the Scylla client
@@ -63,10 +63,10 @@ public class ScyllaCQLClientTest {
   private static String HOST;
   private static int PORT;
 
-  private static Cluster cluster;
+  private static String DATACENTER;
 
   private ScyllaCQLClient client;
-  private Session session;
+  private CqlSession session;
 
   public static ScyllaDBContainer scyllaContainer;
 
@@ -85,21 +85,22 @@ public class ScyllaCQLClientTest {
       HOST = scyllaContainer.getHost();
       PORT = scyllaContainer.getMappedPort(9042);
 
-      final TokenAwarePolicy tokenAware = new TokenAwarePolicy(new RoundRobinPolicy());
-
-      cluster = Cluster.builder()
-          .addContactPoint(HOST)
-          .withPort(PORT)
-          .withLoadBalancingPolicy(tokenAware)
-          .build();
-
       // Ensure keyspace exists
-      Session tmp = cluster.connect();
-      tmp.execute("CREATE KEYSPACE IF NOT EXISTS " + KEYSPACE + " WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};");
-      tmp.close();
+      try (CqlSession tmp = newSession(null)) {
+        tmp.execute("CREATE KEYSPACE IF NOT EXISTS " + KEYSPACE + " WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};");
+        DATACENTER = tmp.execute("SELECT data_center FROM system.local").one().getString("data_center");
+      }
     } catch (Throwable t) {
       Assume.assumeTrue("Skipping Scylla tests because Docker/Testcontainers is not available: " + t.getMessage(), false);
     }
+  }
+
+  private static CqlSession newSession(String keyspace) {
+    return CqlSession.builder()
+        .addContactPoint(new InetSocketAddress(HOST, PORT))
+        .withLocalDatacenter(DATACENTER == null ? "datacenter1" : DATACENTER)
+        .withKeyspace(keyspace)
+        .build();
   }
 
   private void createTableFromCqlFile() throws IOException {
@@ -123,7 +124,7 @@ public class ScyllaCQLClientTest {
 
   @Before
   public void setUp() throws Exception {
-    session = cluster.connect(KEYSPACE);
+    session = newSession(KEYSPACE);
 
     // Create table using the CQL file from resources
     createTableFromCqlFile();
@@ -155,8 +156,9 @@ public class ScyllaCQLClientTest {
   @After
   public void clearTable() {
     // Clear the table so that each test starts fresh.
-    final Statement truncate = QueryBuilder.truncate(TABLE);
-    session.execute(truncate);
+    session.execute(QueryBuilder.truncate(TABLE).build());
+    session.close();
+    session = null;
   }
 
   @Test
@@ -168,12 +170,11 @@ public class ScyllaCQLClientTest {
   }
 
   private void insertRow() {
-    Insert insertStmt = QueryBuilder.insertInto(TABLE);
-    insertStmt.value(ScyllaCQLClient.YCSB_KEY, DEFAULT_ROW_KEY);
-
-    insertStmt.value("field0", "value1");
-    insertStmt.value("field1", "value2");
-    session.execute(insertStmt);
+    session.execute(QueryBuilder.insertInto(TABLE)
+        .value(ScyllaCQLClient.YCSB_KEY, QueryBuilder.literal(DEFAULT_ROW_KEY))
+        .value("field0", QueryBuilder.literal("value1"))
+        .value("field1", QueryBuilder.literal("value2"))
+        .build());
   }
 
   @Test
@@ -201,7 +202,7 @@ public class ScyllaCQLClientTest {
   public void testReadSingleColumn() {
     insertRow();
     final HashMap<String, ByteIterator> result = new HashMap<>();
-    final Set<String> fields = Sets.newHashSet("field1");
+    final Set<String> fields = Collections.singleton("field1");
     final Status status = client.read(TABLE, DEFAULT_ROW_KEY, fields, result);
     assertThat(status, is(Status.OK));
     assertThat(result.entrySet(), hasSize(1));
@@ -220,16 +221,17 @@ public class ScyllaCQLClientTest {
     assertThat(status, is(Status.OK));
 
     // Verify result
-    final Select selectStmt =
-        QueryBuilder.select("field0", "field1")
-            .from(TABLE)
-            .where(QueryBuilder.eq(ScyllaCQLClient.YCSB_KEY, key))
-            .limit(1);
+    final SimpleStatement selectStmt =
+        QueryBuilder.selectFrom(TABLE)
+            .columns("field0", "field1")
+            .whereColumn(ScyllaCQLClient.YCSB_KEY).isEqualTo(QueryBuilder.literal(key))
+            .limit(1)
+            .build();
 
     final ResultSet rs = session.execute(selectStmt);
     final Row row = rs.one();
     assertThat(row, notNullValue());
-    assertThat(rs.isExhausted(), is(true));
+    assertThat(rs.one(), nullValue());
     assertThat(row.getString("field0"), is("value1"));
     assertThat(row.getString("field1"), is("value2"));
   }
@@ -247,16 +249,17 @@ public class ScyllaCQLClientTest {
     assertThat(status, is(Status.OK));
 
     // Verify result
-    final Select selectStmt =
-        QueryBuilder.select("field0", "field1")
-            .from(TABLE)
-            .where(QueryBuilder.eq(ScyllaCQLClient.YCSB_KEY, DEFAULT_ROW_KEY))
-            .limit(1);
+    final SimpleStatement selectStmt =
+        QueryBuilder.selectFrom(TABLE)
+            .columns("field0", "field1")
+            .whereColumn(ScyllaCQLClient.YCSB_KEY).isEqualTo(QueryBuilder.literal(DEFAULT_ROW_KEY))
+            .limit(1)
+            .build();
 
     final ResultSet rs = session.execute(selectStmt);
     final Row row = rs.one();
     assertThat(row, notNullValue());
-    assertThat(rs.isExhausted(), is(true));
+    assertThat(rs.one(), nullValue());
     assertThat(row.getString("field0"), is("new-value1"));
     assertThat(row.getString("field1"), is("new-value2"));
   }
@@ -269,15 +272,27 @@ public class ScyllaCQLClientTest {
     assertThat(status, is(Status.OK));
 
     // Verify result
-    final Select selectStmt =
-        QueryBuilder.select("field0", "field1")
-            .from(TABLE)
-            .where(QueryBuilder.eq(ScyllaCQLClient.YCSB_KEY, DEFAULT_ROW_KEY))
-            .limit(1);
+    final SimpleStatement selectStmt =
+        QueryBuilder.selectFrom(TABLE)
+            .columns("field0", "field1")
+            .whereColumn(ScyllaCQLClient.YCSB_KEY).isEqualTo(QueryBuilder.literal(DEFAULT_ROW_KEY))
+            .limit(1)
+            .build();
 
     final ResultSet rs = session.execute(selectStmt);
     final Row row = rs.one();
     assertThat(row, nullValue());
+  }
+
+  @Test
+  public void testScan() {
+    insertRow();
+
+    final Vector<HashMap<String, ByteIterator>> result = new Vector<>();
+    final Status status = client.scan(TABLE, DEFAULT_ROW_KEY, 10, Collections.singleton("field0"), result);
+    assertThat(status, is(Status.OK));
+    assertThat(result, hasSize(1));
+    assertThat(StringByteIterator.getStringMap(result.get(0)), hasEntry("field0", "value1"));
   }
 
   @Test
@@ -295,10 +310,6 @@ public class ScyllaCQLClientTest {
 
   @AfterClass
   public static void tearDownContainer() {
-    if (cluster != null) {
-      cluster.close();
-      cluster = null;
-    }
     if (scyllaContainer != null) {
       scyllaContainer.stop();
       scyllaContainer = null;
